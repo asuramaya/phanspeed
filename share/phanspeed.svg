@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="#3b2e6e"/>
+  <g transform="translate(64,64)" fill="#b9acff">
+    <circle r="8" fill="#ffffff"/>
+    <g id="b">
+      <path d="M0,-10 C 18,-30 40,-22 34,-6 C 22,-12 10,-8 0,0 Z"/>
+    </g>
+    <use href="#b" transform="rotate(90)"/>
+    <use href="#b" transform="rotate(180)"/>
+    <use href="#b" transform="rotate(270)"/>
+  </g>
+</svg>

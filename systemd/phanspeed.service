@@ -1,0 +1,52 @@
+[Unit]
+Description=PhanSpeed — Dell thermal/fan control daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/phanspeedd
+# Restore a neutral thermal profile + clear status on stop/restart:
+ExecStopPost=/bin/sh -c 'echo balanced > /sys/firmware/acpi/platform_profile 2>/dev/null; rm -f /run/phanspeed/status.json; true'
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=phanspeed
+RuntimeDirectoryMode=0755
+
+# --- sandboxing ---------------------------------------------------------
+# The daemon owns every file it touches as root, so it needs no capabilities.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+# Read-only filesystem; strict leaves /dev /proc /sys writable, so the
+# platform_profile write under /sys still works. Config dir re-allowed below.
+ProtectSystem=strict
+ReadWritePaths=/etc/phanspeed
+ProtectHome=tmpfs
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+# No network of any kind (daemon only binds an AF_UNIX socket):
+IPAddressDeny=any
+# No device access needed:
+DevicePolicy=closed
+KeyringMode=private
+UMask=0077
+# NOTE: do NOT set ProtectKernelTunables=yes — it remounts /sys read-only and
+# would break writing /sys/firmware/acpi/platform_profile.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python compiles
+        run: python3 -m py_compile bin/phanspeedd diag.py
+
+      - name: Shell scripts parse
+        run: bash -n install.sh && bash -n uninstall.sh
+
+      - name: Extension JS syntax
+        run: node --check extension/phanspeed@local/extension.js
+
+      - name: metadata.json is valid
+        run: python3 -c "import json; json.load(open('extension/phanspeed@local/metadata.json'))"
+
+      - name: systemd unit verifies
+        run: |
+          # ExecStart binary isn't installed in CI; ignore only that line.
+          systemd-analyze verify ./systemd/phanspeed.service 2>&1 \
+            | grep -v 'not executable' | { ! grep .; }
+
+# Note: tests/attack_socket.py requires real Dell hardware (dell-smm-hwmon +
+# platform_profile) and is run by maintainers on-device, not in CI.

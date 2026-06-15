@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+"""
+phanspeedd — Dell thermal-profile control daemon (Precision / XPS).
+
+Direct pwm/RPM control is firmware-locked on modern Dells (the EC rejects
+pwm_enable changes with EINVAL), so the real cooling lever is the ACPI
+platform_profile: cool / quiet / balanced / performance. This daemon owns
+that knob and adds a temperature-driven auto policy on top of it — the
+closest equivalent to a fan curve the hardware allows.
+
+  * manual mode : hold a fixed profile.
+  * auto mode   : step quiet -> balanced -> cool as a sensor heats up,
+                  with hysteresis so it doesn't flap at the boundaries.
+  * emergency   : force the most-aggressive cooling profile once a CPU
+                  sensor crosses emergency_temp, latched until it falls
+                  below emergency_clear_temp.
+  * on exit/crash, the profile is restored to 'balanced'.
+
+Status : a world-readable JSON snapshot at /run/phanspeed/status.json that the
+         Quick Settings extension polls (no privilege needed to read).
+Control: line-delimited JSON over /run/phanspeed/control.sock (mode 0666).
+Config : /etc/phanspeed/config.json (hot-reloaded).
+"""
+
+import os
+import sys
+import json
+import time
+import glob
+import signal
+import socket
+import struct
+import atexit
+import threading
+import traceback
+
+RUN_DIR = "/run/phanspeed"
+SOCK_PATH = "/run/phanspeed/control.sock"
+STATUS_PATH = "/run/phanspeed/status.json"
+CONFIG_PATH = "/etc/phanspeed/config.json"
+
+PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
+CHOICES_PATH = "/sys/firmware/acpi/platform_profile_choices"
+
+# preferred profile name per cooling level (first match in choices wins)
+LEVEL_NAMES = {
+    0: ["quiet", "low-power", "power-saver", "balanced"],          # calmest fans
+    1: ["balanced", "balanced-performance", "quiet"],             # middle
+    2: ["cool", "performance", "balanced-performance", "balanced"],  # max cooling
+}
+RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
+
+DEFAULTS = {
+    "poll_interval": 3.0,
+    "mode": "auto",                 # auto | manual
+    "manual_profile": "balanced",
+    "sensor": "auto",               # "auto" = hottest CPU sensor
+    "quiet_below": 60,              # < this  -> quiet
+    "cool_above": 80,              # > this  -> cool ; between -> balanced
+    "hysteresis": 4,
+    "emergency_temp": 90,
+    "emergency_clear_temp": 78,
+    "allow_uids": [],               # UIDs allowed to control (root always allowed)
+    "rate_limit": 10,               # max config-changing commands per 10s window
+}
+
+# Hard safety bounds for socket-settable numeric fields. The control socket is
+# world-writable (0666), so EVERY value coming from it is treated as hostile and
+# clamped here — in particular emergency_temp is hard-capped so the thermal
+# failsafe can never be disabled by a local process.
+NUM_LIMITS = {
+    "quiet_below": (30, 85),
+    "cool_above": (40, 90),
+    "hysteresis": (0, 15),
+    "emergency_temp": (60, 95),          # hard ceiling 95 °C — cannot be raised away
+    "emergency_clear_temp": (40, 90),
+}
+MAX_MSG_BYTES = 64 * 1024                 # cap socket reads to avoid memory DoS
+
+
+def _coerce_num(v, lo, hi):
+    """Return v clamped to [lo, hi] if it's a real number, else None.
+    Rejects bools, strings, NaN/inf."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    return max(lo, min(hi, v))
+
+
+def sanitize_config(cfg, choices, sensors):
+    """Clamp/validate every field and enforce failsafe invariants in place.
+    Applied on load AND after every socket set, so neither a tampered config
+    file nor a hostile socket client can ever leave the daemon in an unsafe or
+    crashing state."""
+    for k, (lo, hi) in NUM_LIMITS.items():
+        v = _coerce_num(cfg.get(k), lo, hi)
+        cfg[k] = v if v is not None else DEFAULTS[k]
+    if cfg.get("mode") not in ("auto", "manual"):
+        cfg["mode"] = DEFAULTS["mode"]
+    if cfg.get("manual_profile") not in choices:
+        cfg["manual_profile"] = choices[0] if choices else DEFAULTS["manual_profile"]
+    s = cfg.get("sensor")
+    if not (isinstance(s, str) and (s == "auto" or s in sensors)):
+        cfg["sensor"] = "auto"
+    au = cfg.get("allow_uids")
+    cfg["allow_uids"] = ([int(u) for u in au
+                          if isinstance(u, int) and not isinstance(u, bool)]
+                         if isinstance(au, list) else [])
+    rl = _coerce_num(cfg.get("rate_limit"), 1, 1000)
+    cfg["rate_limit"] = int(rl) if rl is not None else DEFAULTS["rate_limit"]
+    # invariants — the failsafe must always be meaningful
+    cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
+    if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
+        cfg["emergency_clear_temp"] = cfg["emergency_temp"] - 2
+    if cfg["cool_above"] <= cfg["quiet_below"]:
+        cfg["cool_above"] = cfg["quiet_below"] + 1
+    return cfg
+
+
+def log(msg):
+    sys.stdout.write(f"[phanspeed] {msg}\n")
+    sys.stdout.flush()
+
+
+# --------------------------------------------------------------------------- #
+# sysfs helpers
+# --------------------------------------------------------------------------- #
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _read_int(path):
+    v = _read(path)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _write(path, value):
+    try:
+        with open(path, "w") as f:
+            f.write(str(value))
+        return True
+    except OSError as e:
+        log(f"write failed {path} <- {value}: {e}")
+        return False
+
+
+def find_hwmon(name):
+    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        if _read(os.path.join(d, "name")) == name:
+            return d
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Hardware: sensors, fan RPM readback, and the platform_profile knob
+# --------------------------------------------------------------------------- #
+class Hardware:
+    def __init__(self):
+        if not os.path.exists(PROFILE_PATH):
+            raise SystemExit("platform_profile not available — no controllable knob.")
+        self.choices = (_read(CHOICES_PATH) or "balanced").split()
+        self.smm = find_hwmon("dell_smm")
+        self.ddv = find_hwmon("dell_ddv")
+        self.coretemp = find_hwmon("coretemp")
+        self.fans = self._discover_fans()
+        self.sensors = self._discover_sensors()
+        self.crit_sensor_ids = [
+            sid for sid in self.sensors
+            if "package" in sid.lower() or sid.lower().endswith(":cpu")
+        ] or list(self.sensors)
+        # resolve each cooling level to a concrete, available profile name
+        self.level_profile = {}
+        for lvl, names in LEVEL_NAMES.items():
+            self.level_profile[lvl] = next(
+                (n for n in names if n in self.choices), self.choices[0])
+
+    def _discover_fans(self):
+        fans = {}
+        if not self.smm:
+            return fans
+        for fin in sorted(glob.glob(os.path.join(self.smm, "fan[0-9]*_input"))):
+            idx = os.path.basename(fin).split("_")[0][3:]
+            label = self.ddv and _read(os.path.join(self.ddv, f"fan{idx}_label"))
+            fans[idx] = {"label": label or f"Fan {idx}", "rpm": fin}
+        return fans
+
+    def _discover_sensors(self):
+        sensors = {}
+        for hw, prefix in ((self.ddv, "dell_ddv"), (self.coretemp, "coretemp")):
+            if not hw:
+                continue
+            for tin in sorted(glob.glob(os.path.join(hw, "temp[0-9]*_input")),
+                              key=lambda p: int(os.path.basename(p).split("_")[0][4:])):
+                n = os.path.basename(tin).split("_")[0][4:]
+                label = _read(os.path.join(hw, f"temp{n}_label")) or f"temp{n}"
+                sid = f"{prefix}:{label}"
+                if sid in sensors:
+                    sid = f"{sid} ({n})"
+                sensors[sid] = tin
+        return sensors
+
+    def read_temp(self, sid):
+        mc = _read_int(self.sensors.get(sid, ""))
+        return mc / 1000.0 if mc is not None else None
+
+    def read_rpm(self, idx):
+        return _read_int(self.fans[idx]["rpm"])
+
+    def max_crit_temp(self):
+        vals = [self.read_temp(s) for s in self.crit_sensor_ids]
+        vals = [v for v in vals if v is not None]
+        return max(vals) if vals else None
+
+    def get_profile(self):
+        return _read(PROFILE_PATH)
+
+    def set_profile(self, name):
+        if name not in self.choices:
+            log(f"profile '{name}' not in choices {self.choices}")
+            return False
+        if self.get_profile() == name:
+            return True
+        return _write(PROFILE_PATH, name)
+
+
+# --------------------------------------------------------------------------- #
+# Auto policy: temperature -> cooling level, with hysteresis on the way down
+# --------------------------------------------------------------------------- #
+def target_level(temp, lo, hi, current, hyst):
+    """0=quiet 1=balanced 2=cool. Upgrades immediately; downgrades only after
+    temp falls a full `hyst` below the boundary, so it doesn't oscillate."""
+    if temp >= hi:
+        return 2
+    if temp >= lo:
+        return 2 if (current >= 2 and temp > hi - hyst) else 1
+    # temp < lo
+    if current >= 2 and temp > hi - hyst:
+        return 2
+    if current >= 1 and temp > lo - hyst:
+        return 1
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Daemon
+# --------------------------------------------------------------------------- #
+class Daemon:
+    def __init__(self):
+        self.hw = Hardware()
+        self.lock = threading.RLock()
+        self.emergency = False
+        self.level = 1                 # current auto cooling level
+        self.applied_profile = self.hw.get_profile()
+        self.config = self.load_config()
+        self._stop = threading.Event()
+        self._cmd_times = []           # timestamps of recent config-changing cmds
+        log(f"profiles available: {self.hw.choices}")
+        log(f"level map: {self.hw.level_profile}")
+        log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
+        log(f"watchdog sensors: {self.hw.crit_sensor_ids}")
+
+    # ---- config ---- #
+    def load_config(self):
+        cfg = dict(DEFAULTS)
+        try:
+            with open(CONFIG_PATH) as f:
+                user = json.load(f)
+            if isinstance(user, dict):
+                cfg.update(user)
+                log(f"loaded config from {CONFIG_PATH}")
+            else:
+                log("config not a JSON object, using defaults")
+        except FileNotFoundError:
+            log("no config file, using defaults")
+        except Exception as e:
+            log(f"bad config ({e}), using defaults")
+        # never trust the file: clamp/validate before it reaches the control loop
+        sanitize_config(cfg, self.hw.choices, self.hw.sensors)
+        return cfg
+
+    def save_config(self):
+        with self.lock:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            tmp = CONFIG_PATH + ".tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.config, f, indent=2)
+            os.replace(tmp, CONFIG_PATH)
+        log("config saved")
+
+    # ---- authorization / rate limiting ---- #
+    def allowed_uids(self):
+        """root + configured allow_uids; if none configured, fall back to any
+        user with an active login session (so the logged-in user just works)."""
+        allowed = {0}
+        cfg = self.config.get("allow_uids") or []
+        allowed.update(cfg)
+        if not cfg:
+            try:
+                for name in os.listdir("/run/systemd/users"):
+                    if name.isdigit():
+                        allowed.add(int(name))
+            except OSError:
+                pass
+        return allowed
+
+    def _rate_ok(self):
+        now = time.monotonic()
+        self._cmd_times = [t for t in self._cmd_times if now - t < 10.0]
+        if len(self._cmd_times) >= self.config.get("rate_limit", 10):
+            return False
+        self._cmd_times.append(now)
+        return True
+
+    # ---- control ---- #
+    def policy_temp(self):
+        sid = self.config.get("sensor", "auto")
+        if sid == "auto" or sid not in self.hw.sensors:
+            return self.hw.max_crit_temp()
+        return self.hw.read_temp(sid)
+
+    def apply_once(self):
+        with self.lock:
+            crit = self.hw.max_crit_temp()
+            hi, lo = self.config["emergency_temp"], self.config["emergency_clear_temp"]
+            if crit is not None:
+                if crit >= hi and not self.emergency:
+                    log(f"!! EMERGENCY {crit:.0f}°C >= {hi}°C — forcing max cooling")
+                    self.emergency = True
+                elif crit <= lo and self.emergency:
+                    log(f"emergency cleared {crit:.0f}°C <= {lo}°C")
+                    self.emergency = False
+
+            if self.emergency:
+                self.hw.set_profile(self.hw.level_profile[2])
+                self.applied_profile = self.hw.get_profile()
+                return
+
+            if self.config["mode"] == "manual":
+                self.hw.set_profile(self.config["manual_profile"])
+            else:  # auto
+                t = self.policy_temp()
+                if t is not None:
+                    self.level = target_level(
+                        t, self.config["quiet_below"], self.config["cool_above"],
+                        self.level, self.config["hysteresis"])
+                    self.hw.set_profile(self.hw.level_profile[self.level])
+            self.applied_profile = self.hw.get_profile()
+        self.write_status()
+
+    def _status_target_uid(self):
+        cfg = self.config.get("allow_uids") or []
+        if cfg:
+            return cfg[0]
+        try:
+            us = [int(n) for n in os.listdir("/run/systemd/users")
+                  if n.isdigit() and int(n) >= 1000]
+            if us:
+                return min(us)
+        except OSError:
+            pass
+        return None
+
+    def write_status(self):
+        """Publish a snapshot for the pill, readable only by root + the owner."""
+        try:
+            os.makedirs(RUN_DIR, exist_ok=True)
+            tmp = STATUS_PATH + ".tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.status(), f)
+            os.replace(tmp, STATUS_PATH)
+            uid = self._status_target_uid()
+            if uid is not None:
+                try:
+                    os.chown(STATUS_PATH, uid, -1)
+                except OSError:
+                    pass
+                os.chmod(STATUS_PATH, 0o640)
+            else:
+                os.chmod(STATUS_PATH, 0o644)  # no user identified; temps only
+        except Exception as e:
+            log(f"status write failed: {e}")
+
+    def status(self):
+        with self.lock:
+            return {
+                "ok": True,
+                "emergency": self.emergency,
+                "mode": self.config["mode"],
+                "active_profile": self.hw.get_profile(),
+                "choices": self.hw.choices,
+                "level": self.level,
+                "policy_temp": self.policy_temp(),
+                "fans": {i: {"label": f["label"], "rpm": self.hw.read_rpm(i)}
+                         for i, f in self.hw.fans.items()},
+                "temps": {s: self.hw.read_temp(s) for s in self.hw.sensors},
+                "sensors": list(self.hw.sensors),
+                "config": self.config,
+            }
+
+    def handle_cmd(self, msg):
+        cmd = msg.get("cmd")
+        if cmd == "get":
+            return self.status()
+        if cmd == "set":
+            changes, rejected = {}, []
+            if "mode" in msg:
+                if msg["mode"] in ("auto", "manual"):
+                    changes["mode"] = msg["mode"]
+                else:
+                    rejected.append("mode")
+            if "manual_profile" in msg:
+                if msg["manual_profile"] in self.hw.choices:
+                    changes["manual_profile"] = msg["manual_profile"]
+                else:
+                    rejected.append("manual_profile")
+            if "sensor" in msg:
+                sv = msg["sensor"]
+                if isinstance(sv, str) and (sv == "auto" or sv in self.hw.sensors):
+                    changes["sensor"] = sv
+                else:
+                    rejected.append("sensor")
+            for k, (lo, hi) in NUM_LIMITS.items():
+                if k in msg:
+                    cv = _coerce_num(msg[k], lo, hi)
+                    if cv is None:
+                        rejected.append(k)
+                    else:
+                        changes[k] = cv
+            with self.lock:
+                if changes and not self._rate_ok():
+                    return {"ok": False, "error": "rate limited"}
+                before = dict(self.config)
+                self.config.update(changes)
+                # re-clamp everything + enforce failsafe invariants
+                sanitize_config(self.config, self.hw.choices, self.hw.sensors)
+                changed = self.config != before
+            self.apply_once()
+            if changed:
+                self.save_config()
+            resp = self.status()
+            if rejected:
+                log(f"rejected invalid set fields: {rejected}")
+                resp["rejected"] = rejected
+            return resp
+        return {"ok": False, "error": f"unknown cmd {cmd}"}
+
+    # ---- socket ---- #
+    def serve_socket(self):
+        try:
+            os.unlink(SOCK_PATH)
+        except FileNotFoundError:
+            pass
+        os.makedirs(RUN_DIR, exist_ok=True)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(SOCK_PATH)
+        srv.listen(8)
+        srv.settimeout(1.0)
+        # Perms are a first gate; SO_PEERCRED below is the real authorization.
+        os.chmod(SOCK_PATH, 0o660)
+        uid = self._status_target_uid()
+        if uid is not None:
+            try:
+                os.chown(SOCK_PATH, uid, -1)   # only this user (+root) can connect
+            except OSError:
+                pass
+        else:
+            os.chmod(SOCK_PATH, 0o666)         # no user known; rely on SO_PEERCRED
+        log(f"listening on {SOCK_PATH}")
+        while not self._stop.is_set():
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            with conn:
+                try:
+                    conn.settimeout(1.0)
+                    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                            struct.calcsize("3i"))
+                    pid, uid, _gid = struct.unpack("3i", creds)
+                    if uid not in self.allowed_uids():
+                        log(f"DENIED connection from uid={uid} pid={pid}")
+                        resp = {"ok": False, "error": "unauthorized"}
+                        conn.sendall((json.dumps(resp) + "\n").encode())
+                        continue
+                    data = b""
+                    while b"\n" not in data:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                        if len(data) > MAX_MSG_BYTES:
+                            raise ValueError("message too large")
+                    if not data:
+                        continue
+                    msg = json.loads(data.split(b"\n", 1)[0])
+                    if not isinstance(msg, dict):
+                        raise ValueError("message must be a JSON object")
+                    resp = self.handle_cmd(msg)
+                except Exception as e:
+                    resp = {"ok": False, "error": str(e)}
+                try:
+                    conn.sendall((json.dumps(resp) + "\n").encode())
+                except OSError:
+                    pass
+        srv.close()
+
+    # ---- lifecycle ---- #
+    def restore(self):
+        name = next((n for n in RESTORE_NAMES if n in self.hw.choices),
+                    self.hw.choices[0])
+        log(f"restoring profile -> {name}")
+        try:
+            self.hw.set_profile(name)
+        except Exception as e:
+            log(f"restore error: {e}")
+
+    def run(self):
+        atexit.register(self.restore)
+
+        def on_signal(signum, _f):
+            log(f"signal {signum} — stopping")
+            self._stop.set()
+        signal.signal(signal.SIGTERM, on_signal)
+        signal.signal(signal.SIGINT, on_signal)
+
+        threading.Thread(target=self.serve_socket, daemon=True).start()
+        log("control loop started")
+        while not self._stop.is_set():
+            try:
+                self.apply_once()
+            except Exception:
+                log("apply error:\n" + traceback.format_exc())
+            self._stop.wait(self.config.get("poll_interval", 3.0))
+        self.restore()
+
+
+def main():
+    if os.geteuid() != 0:
+        sys.exit("phanspeedd must run as root.")
+    Daemon().run()
+
+
+if __name__ == "__main__":
+    main()
