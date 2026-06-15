@@ -44,6 +44,10 @@ CONFIG_PATH = "/etc/phanspeed/config.json"
 PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
 CHOICES_PATH = "/sys/firmware/acpi/platform_profile_choices"
 
+RAPL_GLOB = "/sys/class/powercap/intel-rapl:*"   # package domains live here
+PL_MIN_W = 8                                       # never cap below this (usability)
+PL_MAX_W = 250                                      # absolute sanity ceiling
+
 # preferred profile name per cooling level (first match in choices wins)
 LEVEL_NAMES = {
     0: ["quiet", "low-power", "power-saver", "balanced"],          # calmest fans
@@ -64,6 +68,7 @@ DEFAULTS = {
     "emergency_clear_temp": 78,
     "allow_uids": [],               # UIDs allowed to control (root always allowed)
     "rate_limit": 10,               # max config-changing commands per 10s window
+    "power_limit_w": 0,             # CPU PL1 cap in W; 0 = unmanaged (leave default)
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -111,6 +116,14 @@ def sanitize_config(cfg, choices, sensors):
                          if isinstance(au, list) else [])
     rl = _coerce_num(cfg.get("rate_limit"), 1, 1000)
     cfg["rate_limit"] = int(rl) if rl is not None else DEFAULTS["rate_limit"]
+    # power limit: 0 = unmanaged, otherwise clamp to a usable, sane window
+    pw = cfg.get("power_limit_w")
+    if _coerce_num(pw, 0, PL_MAX_W) is None:
+        cfg["power_limit_w"] = 0
+    elif pw == 0:
+        cfg["power_limit_w"] = 0
+    else:
+        cfg["power_limit_w"] = int(max(PL_MIN_W, min(PL_MAX_W, pw)))
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -183,6 +196,48 @@ class Hardware:
         for lvl, names in LEVEL_NAMES.items():
             self.level_profile[lvl] = next(
                 (n for n in names if n in self.choices), self.choices[0])
+        self._discover_rapl()
+
+    # ---- RAPL CPU power limit (PL1) ---- #
+    def _discover_rapl(self):
+        """Find the package RAPL domain and its writable PL1 node, if any."""
+        self.rapl_pl1 = None      # path to constraint_0_power_limit_uw
+        self.power_base_w = None  # spec/base TDP (W)
+        self.power_default_uw = None  # as-found PL1 to restore on exit
+        for d in sorted(glob.glob(RAPL_GLOB)):
+            name = _read(os.path.join(d, "name")) or ""
+            if not name.startswith("package"):
+                continue
+            pl1 = os.path.join(d, "constraint_0_power_limit_uw")
+            if not (os.path.exists(pl1) and os.access(pl1, os.W_OK)):
+                continue
+            self.rapl_pl1 = pl1
+            self.power_default_uw = _read_int(pl1)
+            base = _read_int(os.path.join(d, "constraint_0_max_power_uw"))
+            self.power_base_w = round(base / 1e6) if base else None
+            break
+
+    @property
+    def has_power(self):
+        return self.rapl_pl1 is not None
+
+    def get_power_w(self):
+        if not self.has_power:
+            return None
+        uw = _read_int(self.rapl_pl1)
+        return round(uw / 1e6) if uw else None
+
+    def set_power_w(self, watts):
+        if not self.has_power:
+            return False
+        watts = max(PL_MIN_W, min(PL_MAX_W, int(watts)))
+        if self.get_power_w() == watts:
+            return True
+        return _write(self.rapl_pl1, int(watts * 1_000_000))
+
+    def restore_power(self):
+        if self.has_power and self.power_default_uw:
+            _write(self.rapl_pl1, self.power_default_uw)
 
     def _discover_fans(self):
         fans = {}
@@ -264,6 +319,7 @@ class Daemon:
         self.config = self.load_config()
         self._stop = threading.Event()
         self._cmd_times = []           # timestamps of recent config-changing cmds
+        self._power_dirty = False      # have we changed the CPU power limit?
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -343,6 +399,7 @@ class Daemon:
 
             if self.emergency:
                 self.hw.set_profile(self.hw.level_profile[2])
+                self._apply_power(emergency=True)
                 self.applied_profile = self.hw.get_profile()
                 return
 
@@ -355,8 +412,25 @@ class Daemon:
                         t, self.config["quiet_below"], self.config["cool_above"],
                         self.level, self.config["hysteresis"])
                     self.hw.set_profile(self.hw.level_profile[self.level])
+            self._apply_power(emergency=False)
             self.applied_profile = self.hw.get_profile()
         self.write_status()
+
+    def _apply_power(self, emergency):
+        """Reassert the CPU power cap. During an emergency, additionally clamp to
+        the base TDP to cut heat at the source. 0 = leave firmware default."""
+        if not self.hw.has_power:
+            return
+        cap = self.config.get("power_limit_w", 0)
+        if emergency and self.hw.power_base_w:
+            base = self.hw.power_base_w
+            cap = base if cap == 0 else min(cap, base)
+        if cap and cap > 0:
+            self.hw.set_power_w(cap)        # reassert each loop, defeats drift
+            self._power_dirty = True
+        elif self._power_dirty:
+            self.hw.restore_power()         # unmanaged again -> put default back
+            self._power_dirty = False
 
     def _status_target_uid(self):
         cfg = self.config.get("allow_uids") or []
@@ -406,6 +480,15 @@ class Daemon:
                          for i, f in self.hw.fans.items()},
                 "temps": {s: self.hw.read_temp(s) for s in self.hw.sensors},
                 "sensors": list(self.hw.sensors),
+                "power": {
+                    "available": self.hw.has_power,
+                    "limit_w": self.config.get("power_limit_w", 0),
+                    "current_w": self.hw.get_power_w(),
+                    "base_w": self.hw.power_base_w,
+                    "min_w": PL_MIN_W,
+                    "default_w": (round(self.hw.power_default_uw / 1e6)
+                                  if self.hw.power_default_uw else None),
+                },
                 "config": self.config,
             }
 
@@ -431,6 +514,12 @@ class Daemon:
                     changes["sensor"] = sv
                 else:
                     rejected.append("sensor")
+            if "power_limit_w" in msg:
+                # 0 = unmanaged; otherwise must be a real number (clamped later)
+                if _coerce_num(msg["power_limit_w"], 0, PL_MAX_W) is None:
+                    rejected.append("power_limit_w")
+                else:
+                    changes["power_limit_w"] = msg["power_limit_w"]
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)
@@ -525,6 +614,7 @@ class Daemon:
         log(f"restoring profile -> {name}")
         try:
             self.hw.set_profile(name)
+            self.hw.restore_power()
         except Exception as e:
             log(f"restore error: {e}")
 

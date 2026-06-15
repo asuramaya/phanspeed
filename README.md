@@ -29,8 +29,10 @@ A Quick Settings pill that:
 - Shows the active profile + CPU temp at a glance (icon changes with profile).
 - **Click the pill** → toggle *Auto by temperature* on/off.
 - **Open the menu** → pick a profile manually (Quiet/Balanced/Cool/Performance),
-  see live CPU/GPU temps and fan RPM.
-- Turns red on the **emergency override** (forced max cooling above 90 °C).
+  set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat),
+  and see live CPU/GPU temps and fan RPM.
+- Turns red on the **emergency override** (forced max cooling above 90 °C, which
+  also drops the CPU to its base TDP to cut heat at the source).
 
 ## Architecture
 
@@ -114,9 +116,13 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `cool_above`  | above this °C → Cool (between → Balanced) |
 | `hysteresis`  | °C deadband so it doesn't flap |
 | `emergency_temp` | force max cooling at/above this °C |
+| `power_limit_w` | CPU sustained power cap (Intel RAPL PL1) in W; `0` = unmanaged |
 
-The 5770 runs hot — if you see frequent 90 °C+ spikes, lower `cool_above` to
-~72, or reduce heat at the source with undervolting / a lower CPU power limit.
+The 5770 runs hot. `platform_profile` only changes *fan* behaviour — to actually
+cut the heat, cap CPU power: set `power_limit_w` (e.g. the chip's base TDP) or use
+the **CPU power limit** submenu in the pill. On 12th-gen+ Intel, RAPL is the lever
+that works (MSR undervolting is locked by the Plundervolt mitigation). The
+emergency override also drops to base TDP automatically.
 
 ## Compatibility
 

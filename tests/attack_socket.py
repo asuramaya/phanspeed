@@ -52,6 +52,9 @@ def check_invariants(cfg, where):
             assert isinstance(cfg[k], (int, float)) and not isinstance(cfg[k], bool), \
                 f"{k} type"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
+        pw = cfg["power_limit_w"]
+        assert isinstance(pw, int) and not isinstance(pw, bool), "power_limit_w type"
+        assert pw == 0 or 8 <= pw <= 250, "power_limit_w out of safe range"
     except AssertionError as e:
         fails.append(f"[{where}] invariant: {e}")
 
@@ -74,6 +77,11 @@ HOSTILE = [
     {"cmd": "set", "rate_limit": -5},
     {"cmd": "set", "emergency_temp": float("inf")},
     {"cmd": "set", "emergency_temp": float("nan")},
+    {"cmd": "set", "power_limit_w": 999999},   # absurd cap -> clamp
+    {"cmd": "set", "power_limit_w": 1},         # below usable min -> clamp up
+    {"cmd": "set", "power_limit_w": -50},       # negative -> clamp
+    {"cmd": "set", "power_limit_w": "max"},     # wrong type -> unmanaged
+    {"cmd": "set", "power_limit_w": [45]},      # list -> rejected
     {"cmd": "wat"}, {"cmd": 123}, {}, {"cmd": "get"},
 ]
 for msg in HOSTILE:
@@ -86,7 +94,8 @@ for msg in HOSTILE:
 
 random.seed(1)
 KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
-        "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids", "rate_limit"]
+        "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
+        "rate_limit", "power_limit_w"]
 VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto", "cool"]
 for _ in range(3000):
     msg = {"cmd": random.choice(["set", "get", "x"])}

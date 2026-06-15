@@ -76,6 +76,10 @@ class PhanToggle extends QuickMenuToggle {
         this._profileSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._profileSection);
 
+        // CPU power-limit submenu (added only when RAPL is available)
+        this._powerSub = null;
+        this._powerItems = {};
+
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._tempItem);
@@ -104,6 +108,36 @@ class PhanToggle extends QuickMenuToggle {
         this._built = true;
     }
 
+    _buildPower(power) {
+        // presets derived from the chip's base TDP, plus "Full"
+        const base = (typeof power.base_w === 'number' && power.base_w > 0)
+            ? power.base_w : 45;
+        const min = power.min_w || 8;
+        const presets = [...new Set([base, Math.round(base * 0.8),
+                                     Math.round(base * 0.6), Math.round(base * 0.4)])]
+            .filter(w => w >= min).sort((a, b) => b - a);
+
+        this._powerSub = new PopupMenu.PopupSubMenuMenuItem('CPU power limit', true);
+        this._powerSub.icon.icon_name = 'battery-symbolic';
+        this._powerItems = {};
+
+        const add = (label, w) => {
+            const it = new PopupMenu.PopupMenuItem(label);
+            it.connect('activate', () => {
+                sendCmd({cmd: 'set', power_limit_w: w});
+                this._scheduleRefresh();
+            });
+            this._powerSub.menu.addMenuItem(it);
+            this._powerItems[w] = it;
+        };
+        add('Full (default)', 0);
+        for (const w of presets)
+            add(`${w} W`, w);
+
+        // insert the submenu right after the profile section
+        this.menu.addMenuItem(this._powerSub, 1);
+    }
+
     _scheduleRefresh() {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
             this.refresh();
@@ -122,6 +156,10 @@ class PhanToggle extends QuickMenuToggle {
         }
         if (!this._built && Array.isArray(st.choices))
             this._buildProfiles(st.choices.filter(c => typeof c === 'string'));
+
+        const power = isObj(st.power) ? st.power : {};
+        if (!this._powerSub && power.available)
+            this._buildPower(power);
 
         const profile = typeof st.active_profile === 'string' ? st.active_profile : '';
         const auto = st.mode === 'auto';
@@ -146,6 +184,19 @@ class PhanToggle extends QuickMenuToggle {
         for (const [name, item] of Object.entries(this._profileItems)) {
             const active = !auto && name === profile;
             item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        }
+
+        // power submenu: label shows the live cap, ornament marks the active preset
+        if (this._powerSub) {
+            const limit = num(power.limit_w) || 0;       // 0 = unmanaged
+            const cur = num(power.current_w);
+            this._powerSub.label.text = limit > 0
+                ? `CPU power: ${limit} W`
+                : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
+            for (const [w, item] of Object.entries(this._powerItems)) {
+                const active = Number(w) === limit;
+                item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+            }
         }
 
         const line = [];

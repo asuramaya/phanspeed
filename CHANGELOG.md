@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-06-15
+
+### Added
+- **CPU power-limit control (Intel RAPL PL1)** — cap sustained CPU power to cut
+  heat at the source, the real fix for thermal spikes that fan profiles can't
+  solve (MSR undervolting is locked on 12th-gen+ Intel). Exposed as a **CPU power
+  limit** submenu in the pill (Full + base-TDP-derived presets).
+- The **emergency override** now also drops the CPU to its base TDP, not just the
+  fan profile.
+- Power state surfaced in `status.json`; `power_limit_w` config field, validated
+  and clamped (`0` = unmanaged, otherwise `[8 W, 250 W]`), reasserted each loop,
+  firmware default restored on exit. Covered by the fuzz suite.
+
 ## [0.1.0] — 2026-06-15
 
 First public release.

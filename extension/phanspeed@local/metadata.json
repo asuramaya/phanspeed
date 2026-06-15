@@ -3,5 +3,5 @@
   "name": "PhanSpeed",
   "description": "Dell thermal/fan control as a Quick Settings pill — pick cool/quiet/balanced/performance or let it auto-cool by temperature. Reads /run/phanspeed/status.json and drives the phanspeedd daemon.",
   "shell-version": ["46", "47", "48", "49", "50"],
-  "version": 1
+  "version": 2
 }
