@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-06-15
+
+### Added
+- **Temperature-coupled power** (`power_auto`) — scales the CPU power cap with
+  temperature (cool → full, warm → base TDP, hot → `power_floor_w`), so it shaves
+  watts progressively instead of only at the emergency cliff. Exposed as a
+  "Scale with temperature" switch in the pill's power submenu.
+- **CI linting** — `ruff` (Python) and `shellcheck` (bash) run on every
+  push/PR; added `ruff.toml`.
+- **extensions.gnome.org prep** — `make-extension-zip.sh` packaging script,
+  `SUBMISSION.md` review checklist, and `url` in `metadata.json`.
+
+### Changed
+- `diag.py` rewritten to clean PEP 8 and now also reports the RAPL power state.
+- CI uses `actions/checkout@v5` (Node 24).
+
 ## [0.2.0] — 2026-06-15
 
 ### Added

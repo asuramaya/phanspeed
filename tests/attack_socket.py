@@ -15,7 +15,6 @@ import json
 import os
 import random
 import socket
-import struct
 import tempfile
 import threading
 import time
@@ -52,9 +51,11 @@ def check_invariants(cfg, where):
             assert isinstance(cfg[k], (int, float)) and not isinstance(cfg[k], bool), \
                 f"{k} type"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
-        pw = cfg["power_limit_w"]
-        assert isinstance(pw, int) and not isinstance(pw, bool), "power_limit_w type"
-        assert pw == 0 or 8 <= pw <= 250, "power_limit_w out of safe range"
+        for pk in ("power_limit_w", "power_floor_w"):
+            pw = cfg[pk]
+            assert isinstance(pw, int) and not isinstance(pw, bool), f"{pk} type"
+            assert pw == 0 or 8 <= pw <= 250, f"{pk} out of safe range"
+        assert isinstance(cfg["power_auto"], bool), "power_auto type"
     except AssertionError as e:
         fails.append(f"[{where}] invariant: {e}")
 
@@ -95,7 +96,7 @@ for msg in HOSTILE:
 random.seed(1)
 KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
         "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
-        "rate_limit", "power_limit_w"]
+        "rate_limit", "power_limit_w", "power_floor_w", "power_auto"]
 VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto", "cool"]
 for _ in range(3000):
     msg = {"cmd": random.choice(["set", "get", "x"])}

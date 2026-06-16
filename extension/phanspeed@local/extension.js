@@ -121,10 +121,21 @@ class PhanToggle extends QuickMenuToggle {
         this._powerSub.icon.icon_name = 'battery-symbolic';
         this._powerItems = {};
 
+        // "scale with temperature" switch at the top of the submenu
+        this._powerAutoItem = new PopupMenu.PopupSwitchMenuItem(
+            'Scale with temperature', false);
+        this._powerAutoItem.connect('toggled', (_i, state) => {
+            sendCmd({cmd: 'set', power_auto: state});
+            this._scheduleRefresh();
+        });
+        this._powerSub.menu.addMenuItem(this._powerAutoItem);
+        this._powerSub.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
         const add = (label, w) => {
             const it = new PopupMenu.PopupMenuItem(label);
             it.connect('activate', () => {
-                sendCmd({cmd: 'set', power_limit_w: w});
+                // picking a fixed cap turns off temperature scaling
+                sendCmd({cmd: 'set', power_auto: false, power_limit_w: w});
                 this._scheduleRefresh();
             });
             this._powerSub.menu.addMenuItem(it);
@@ -188,13 +199,19 @@ class PhanToggle extends QuickMenuToggle {
 
         // power submenu: label shows the live cap, ornament marks the active preset
         if (this._powerSub) {
+            const pauto = power.auto === true;
             const limit = num(power.limit_w) || 0;       // 0 = unmanaged
             const cur = num(power.current_w);
-            this._powerSub.label.text = limit > 0
-                ? `CPU power: ${limit} W`
-                : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
+            this._powerAutoItem.setToggleState(pauto);
+            if (pauto)
+                this._powerSub.label.text =
+                    `CPU power: auto${cur != null ? ` · ${cur} W` : ''}`;
+            else
+                this._powerSub.label.text = limit > 0
+                    ? `CPU power: ${limit} W`
+                    : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
             for (const [w, item] of Object.entries(this._powerItems)) {
-                const active = Number(w) === limit;
+                const active = !pauto && Number(w) === limit;
                 item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
             }
         }

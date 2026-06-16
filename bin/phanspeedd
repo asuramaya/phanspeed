@@ -69,6 +69,8 @@ DEFAULTS = {
     "allow_uids": [],               # UIDs allowed to control (root always allowed)
     "rate_limit": 10,               # max config-changing commands per 10s window
     "power_limit_w": 0,             # CPU PL1 cap in W; 0 = unmanaged (leave default)
+    "power_auto": False,            # scale the CPU power cap with temperature
+    "power_floor_w": 0,             # cap when hot under power_auto; 0 = base TDP
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -116,14 +118,15 @@ def sanitize_config(cfg, choices, sensors):
                          if isinstance(au, list) else [])
     rl = _coerce_num(cfg.get("rate_limit"), 1, 1000)
     cfg["rate_limit"] = int(rl) if rl is not None else DEFAULTS["rate_limit"]
-    # power limit: 0 = unmanaged, otherwise clamp to a usable, sane window
-    pw = cfg.get("power_limit_w")
-    if _coerce_num(pw, 0, PL_MAX_W) is None:
-        cfg["power_limit_w"] = 0
-    elif pw == 0:
-        cfg["power_limit_w"] = 0
-    else:
-        cfg["power_limit_w"] = int(max(PL_MIN_W, min(PL_MAX_W, pw)))
+    # power limits: 0 = unmanaged, otherwise clamp to a usable, sane window
+    def _clamp_power(v):
+        if _coerce_num(v, 0, PL_MAX_W) is None or v == 0:
+            return 0
+        return int(max(PL_MIN_W, min(PL_MAX_W, v)))
+    cfg["power_limit_w"] = _clamp_power(cfg.get("power_limit_w"))
+    cfg["power_floor_w"] = _clamp_power(cfg.get("power_floor_w"))
+    cfg["power_auto"] = bool(cfg.get("power_auto")) if isinstance(
+        cfg.get("power_auto"), bool) else False
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -320,6 +323,7 @@ class Daemon:
         self._stop = threading.Event()
         self._cmd_times = []           # timestamps of recent config-changing cmds
         self._power_dirty = False      # have we changed the CPU power limit?
+        self._power_level = 1          # cooling level used by temp-coupled power
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -417,14 +421,29 @@ class Daemon:
         self.write_status()
 
     def _apply_power(self, emergency):
-        """Reassert the CPU power cap. During an emergency, additionally clamp to
-        the base TDP to cut heat at the source. 0 = leave firmware default."""
+        """Reassert the CPU power cap (0 = leave firmware default). During an
+        emergency, clamp to base TDP. When power_auto is on, scale the cap with
+        temperature: cool -> full, warm -> base TDP, hot -> floor."""
         if not self.hw.has_power:
             return
-        cap = self.config.get("power_limit_w", 0)
-        if emergency and self.hw.power_base_w:
-            base = self.hw.power_base_w
-            cap = base if cap == 0 else min(cap, base)
+        base = self.hw.power_base_w
+        if emergency:
+            cap = self.config.get("power_limit_w", 0)
+            if base:
+                cap = base if cap == 0 else min(cap, base)
+        elif self.config.get("power_auto") and base:
+            t = self.policy_temp()
+            if t is None:
+                cap = 0
+            else:
+                self._power_level = target_level(
+                    t, self.config["quiet_below"], self.config["cool_above"],
+                    self._power_level, self.config["hysteresis"])
+                floor = self.config.get("power_floor_w") or base
+                cap = (0, base, floor)[self._power_level]
+        else:
+            cap = self.config.get("power_limit_w", 0)
+
         if cap and cap > 0:
             self.hw.set_power_w(cap)        # reassert each loop, defeats drift
             self._power_dirty = True
@@ -483,6 +502,8 @@ class Daemon:
                 "power": {
                     "available": self.hw.has_power,
                     "limit_w": self.config.get("power_limit_w", 0),
+                    "auto": self.config.get("power_auto", False),
+                    "floor_w": self.config.get("power_floor_w", 0),
                     "current_w": self.hw.get_power_w(),
                     "base_w": self.hw.power_base_w,
                     "min_w": PL_MIN_W,
@@ -514,12 +535,18 @@ class Daemon:
                     changes["sensor"] = sv
                 else:
                     rejected.append("sensor")
-            if "power_limit_w" in msg:
-                # 0 = unmanaged; otherwise must be a real number (clamped later)
-                if _coerce_num(msg["power_limit_w"], 0, PL_MAX_W) is None:
-                    rejected.append("power_limit_w")
+            for pk in ("power_limit_w", "power_floor_w"):
+                if pk in msg:
+                    # 0 = unmanaged; otherwise a real number (clamped later)
+                    if _coerce_num(msg[pk], 0, PL_MAX_W) is None:
+                        rejected.append(pk)
+                    else:
+                        changes[pk] = msg[pk]
+            if "power_auto" in msg:
+                if isinstance(msg["power_auto"], bool):
+                    changes["power_auto"] = msg["power_auto"]
                 else:
-                    changes["power_limit_w"] = msg["power_limit_w"]
+                    rejected.append("power_auto")
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)
