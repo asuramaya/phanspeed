@@ -9,7 +9,7 @@ jobs:
   static-checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Python compiles
         run: python3 -m py_compile bin/phanspeedd diag.py
