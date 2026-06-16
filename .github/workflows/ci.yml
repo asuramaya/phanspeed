@@ -14,6 +14,9 @@ jobs:
       - name: Python compiles
         run: python3 -m py_compile bin/phanspeedd diag.py
 
+      - name: Config validation (fuzz, hardware-free)
+        run: python3 tests/test_validation.py
+
       - name: Ruff lint
         run: |
           python3 -m pip install --quiet ruff

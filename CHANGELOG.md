@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-06-15
+
+### Added
+- **GPU power-cap persistence** — the GPU cap is re-asserted whenever the dGPU's
+  live enforced limit drifts from our target (so it survives runtime
+  power-gating), without forcing persistence mode. Optional `gpu_persistence`
+  config runs `nvidia-smi -pm 1` for desktops.
+- **`tests/test_validation.py`** — a hardware-free fuzz of the config validator
+  (8000+ cases) asserting the failsafe invariants always hold; now part of CI, so
+  the security guarantees are checked on every push/PR.
+- **README preview** — an SVG mockup of the Quick Settings pill, plus
+  instructions for capturing a live recording.
+
 ## [0.5.0] — 2026-06-15
 
 ### Added

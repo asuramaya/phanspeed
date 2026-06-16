@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="380" height="396" viewBox="0 0 380 396" xmlns="http://www.w3.org/2000/svg"
+     font-family="Cantarell, 'Segoe UI', sans-serif">
+  <defs>
+    <style>
+      .panel { fill:#242428; }
+      .tile  { fill:#37373d; }
+      .on    { fill:#5b50a8; }
+      .accent{ fill:#b9acff; }
+      .txt   { fill:#ffffff; }
+      .dim   { fill:#9aa0a6; }
+      .grn   { fill:#4caf50; }
+      .amb   { fill:#ffbb33; }
+    </style>
+  </defs>
+
+  <rect width="380" height="396" rx="20" class="panel"/>
+
+  <!-- header -->
+  <circle cx="40" cy="44" r="18" class="on"/>
+  <text x="40" y="49" class="accent" font-size="18" text-anchor="middle">❄</text>
+  <text x="70" y="40" class="txt" font-size="15" font-weight="600">PhanSpeed</text>
+  <text x="70" y="58" class="dim" font-size="12">Auto · Cool · 64°</text>
+  <rect x="300" y="30" width="52" height="28" rx="14" class="on"/>
+  <text x="326" y="48" class="txt" font-size="11" text-anchor="middle">Auto</text>
+
+  <!-- profile pills -->
+  <g font-size="12" text-anchor="middle">
+    <rect x="20"  y="78" width="80" height="34" rx="17" class="tile"/>
+    <text x="60"  y="100" class="txt">Quiet</text>
+    <rect x="108" y="78" width="80" height="34" rx="17" class="tile"/>
+    <text x="148" y="100" class="txt">Balanced</text>
+    <rect x="196" y="78" width="80" height="34" rx="17" class="on"/>
+    <text x="236" y="100" class="txt" font-weight="600">Cool</text>
+    <rect x="284" y="78" width="76" height="34" rx="17" class="tile"/>
+    <text x="322" y="100" class="txt">Perf</text>
+  </g>
+
+  <!-- rows -->
+  <g font-size="13">
+    <text x="24" y="146" class="dim" font-size="13">🔋</text>
+    <text x="46" y="146" class="txt">CPU power: auto · 45 W</text>
+    <text x="356" y="146" class="dim" font-size="11" text-anchor="end">›</text>
+
+    <line x1="20" y1="164" x2="360" y2="164" stroke="#37373d"/>
+
+    <text x="46" y="190" class="txt">GPU power: 60 W · 14 W draw</text>
+    <text x="356" y="190" class="dim" font-size="11" text-anchor="end">›</text>
+
+    <line x1="20" y1="208" x2="360" y2="208" stroke="#37373d"/>
+
+    <text x="46" y="234" class="txt">Quiet on battery</text>
+    <rect x="312" y="222" width="44" height="22" rx="11" class="tile"/>
+    <circle cx="323" cy="233" r="8" fill="#9aa0a6"/>
+  </g>
+
+  <line x1="20" y1="256" x2="360" y2="256" stroke="#37373d"/>
+
+  <!-- live readout -->
+  <g font-size="13">
+    <text x="24" y="286" class="dim">CPU</text>
+    <text x="58" y="286" class="amb" font-weight="700">64°</text>
+    <text x="98" y="286" class="dim">GPU</text>
+    <text x="132" y="286" class="grn" font-weight="700">55°</text>
+    <text x="186" y="286" class="dim">·</text>
+    <text x="204" y="286" class="dim">CPU Fan</text>
+    <text x="264" y="286" class="accent" font-weight="600">2400</text>
+    <text x="306" y="286" class="dim">Video</text>
+    <text x="346" y="286" class="accent" font-weight="600">2800</text>
+  </g>
+
+  <text x="190" y="334" class="dim" font-size="11" text-anchor="middle">
+    Quick Settings pill — next to Wi-Fi &amp; Bluetooth
+  </text>
+  <text x="190" y="360" class="dim" font-size="10" text-anchor="middle" opacity="0.7">
+    (mockup; see README for capturing a live recording)
+  </text>
+</svg>

@@ -13,6 +13,15 @@ Settings pill** next to Wi-Fi and Bluetooth. Built and tested on a **Precision
 > are trademarks of their respective owners. Use at your own risk — see the
 > [thermal failsafe](#security-model) and the no-warranty terms in the license.
 
+<p align="center">
+  <img src="docs/pill-preview.svg" alt="PhanSpeed Quick Settings pill" width="380">
+</p>
+
+<sub>Mockup of the expanded pill. To capture a real recording on Wayland:
+`gnome-extensions enable phanspeed@local`, open Quick Settings, then use the
+built-in screen recorder (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd>)
+and convert the WebM to GIF (e.g. `ffmpeg -i clip.webm docs/demo.gif`).</sub>
+
 ## Why a "thermal" pill and not RPM sliders
 
 Direct fan/RPM control is **firmware-locked** on modern Dells — verified on this
@@ -131,6 +140,7 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `battery_aware` | on battery, force `battery_profile` + cap CPU to base TDP |
 | `battery_profile` | profile to use while on battery (default `quiet`) |
 | `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
+| `gpu_persistence` | enable `nvidia-smi -pm 1` (mainly for desktops; off by default) |
 
 Under `power_auto` the CPU cap ramps **smoothly** from the firmware default at
 `quiet_below` down to the floor at `cool_above`.

@@ -76,6 +76,7 @@ DEFAULTS = {
     "battery_aware": False,         # force a calm profile + low power on battery
     "battery_profile": "quiet",     # profile to use while on battery
     "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
+    "gpu_persistence": False,       # nvidia-smi -pm 1 (keeps driver loaded; desktops)
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -135,6 +136,8 @@ def sanitize_config(cfg, choices, sensors):
         cfg.get("power_auto"), bool) else False
     cfg["battery_aware"] = bool(cfg.get("battery_aware")) if isinstance(
         cfg.get("battery_aware"), bool) else False
+    cfg["gpu_persistence"] = bool(cfg.get("gpu_persistence")) if isinstance(
+        cfg.get("gpu_persistence"), bool) else False
     if cfg.get("battery_profile") not in choices:
         cfg["battery_profile"] = ("quiet" if "quiet" in choices
                                   else (choices[0] if choices else "quiet"))
@@ -380,6 +383,12 @@ class Gpu:
             return True
         return False
 
+    def set_persistence(self, on):
+        if not self.available:
+            return False
+        r = self._run(["-pm", "1" if on else "0"], timeout=5)
+        return bool(r and r.returncode == 0)
+
     def restore(self):
         if self.available and self.default_w:
             self.set_limit_w(self.default_w)
@@ -419,6 +428,7 @@ class Daemon:
         self._power_dirty = False      # have we changed the CPU power limit?
         self._gpu_last_set = None       # last GPU power limit we wrote (W)
         self._gpu_dirty = False         # have we changed the GPU power limit?
+        self._gpu_pm = False            # have we enabled GPU persistence mode?
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -522,11 +532,14 @@ class Daemon:
 
     def _apply_gpu(self, emergency, battery):
         """Cap the discrete GPU's power. Emergency/battery -> minimum; otherwise
-        the configured cap (0 = leave default). Only writes on change (nvidia-smi
-        -pl is slow), so it is not reasserted every loop."""
+        the configured cap (0 = leave default). Re-asserts only when the GPU's
+        live enforced limit drifts from our target (e.g. it reset after runtime
+        power-gating), so nvidia-smi -pl runs only when actually needed."""
         g = self.hw.gpu
         if not g.available or g.min_w is None:
             return
+        if self.config.get("gpu_persistence") and not self._gpu_pm:
+            self._gpu_pm = g.set_persistence(True)
         lim = self.config.get("gpu_power_limit_w", 0)
         if emergency or battery:
             target = int(g.min_w)
@@ -536,7 +549,9 @@ class Daemon:
             target = int(g.default_w)
         else:
             return
-        if target != self._gpu_last_set and g.set_limit_w(target):
+        info = g.query()
+        cur = round(info["limit"]) if info and info.get("limit") is not None else None
+        if (cur is None or abs(cur - target) >= 1) and g.set_limit_w(target):
             self._gpu_last_set = target
             self._gpu_dirty = not (g.default_w and target == int(g.default_w))
 
@@ -700,6 +715,11 @@ class Daemon:
                     changes["battery_aware"] = msg["battery_aware"]
                 else:
                     rejected.append("battery_aware")
+            if "gpu_persistence" in msg:
+                if isinstance(msg["gpu_persistence"], bool):
+                    changes["gpu_persistence"] = msg["gpu_persistence"]
+                else:
+                    rejected.append("gpu_persistence")
             if "battery_profile" in msg:
                 if msg["battery_profile"] in self.hw.choices:
                     changes["battery_profile"] = msg["battery_profile"]
