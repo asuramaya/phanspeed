@@ -30,9 +30,10 @@ rm -f /usr/local/bin/dellfand /usr/local/bin/dellfanctl \
       /usr/local/share/applications/dellfanctl.desktop \
       /usr/local/share/icons/hicolor/scalable/apps/dellfanctl.svg 2>/dev/null || true
 
-# 1. daemon binary (root-owned, not group/world writable)
+# 1. daemon + healthcheck binaries (root-owned, not group/world writable)
 echo "-- installing daemon -> /usr/local/bin/phanspeedd"
 install -m 0755 -o root -g root "$SRC/bin/phanspeedd" /usr/local/bin/phanspeedd
+install -m 0755 -o root -g root "$SRC/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
 
 # 2. default config (auto mode); allow_uids locks control to the installing user
 echo "-- writing default config -> /etc/phanspeed/config.json (allow_uids=[$USER_UID])"
@@ -57,11 +58,14 @@ fi
 chown root:root /etc/phanspeed/config.json
 chmod 0600 /etc/phanspeed/config.json
 
-# 3. systemd service
+# 3. systemd service + healthcheck timer
 echo "-- installing + enabling phanspeed.service"
 install -m 0644 "$SRC/systemd/phanspeed.service" /etc/systemd/system/phanspeed.service
+install -m 0644 "$SRC/systemd/phanspeed-healthcheck.service" /etc/systemd/system/phanspeed-healthcheck.service
+install -m 0644 "$SRC/systemd/phanspeed-healthcheck.timer" /etc/systemd/system/phanspeed-healthcheck.timer
 systemctl daemon-reload
 systemctl enable --now phanspeed.service
+systemctl enable --now phanspeed-healthcheck.timer
 
 # 4. GNOME Shell extension (into the real user's home)
 echo "-- installing Quick Settings extension -> $EXT_DIR"

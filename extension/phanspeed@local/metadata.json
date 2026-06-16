@@ -4,5 +4,5 @@
   "description": "Dell thermal/fan control as a Quick Settings pill — pick cool/quiet/balanced/performance or let it auto-cool by temperature, and cap CPU power. Requires the phanspeedd daemon (https://github.com/asuramaya/phanspeed).",
   "shell-version": ["46", "47", "48", "49", "50"],
   "url": "https://github.com/asuramaya/phanspeed",
-  "version": 4
+  "version": 5
 }

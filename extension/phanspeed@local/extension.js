@@ -91,9 +91,11 @@ class PhanToggle extends QuickMenuToggle {
         this._profileSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._profileSection);
 
-        // CPU power-limit submenu (added only when RAPL is available)
+        // power-limit submenus (added only when the hardware is available)
         this._powerSub = null;
         this._powerItems = {};
+        this._gpuSub = null;
+        this._gpuItems = {};
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -174,6 +176,33 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._powerSub, 1);
     }
 
+    _buildGpu(gpu) {
+        const min = Math.round(gpu.min_w || 1);
+        const max = Math.round(gpu.max_w || 1);
+        const presets = [...new Set([max, Math.round(max * 0.75),
+                                     Math.round(max * 0.5), min])]
+            .filter(w => w >= min && w <= max).sort((a, b) => b - a);
+
+        this._gpuSub = new PopupMenu.PopupSubMenuMenuItem('GPU power limit', true);
+        this._gpuSub.icon.icon_name = 'video-display-symbolic';
+        this._gpuItems = {};
+
+        const add = (label, w) => {
+            const it = new PopupMenu.PopupMenuItem(label);
+            it.connect('activate', () => {
+                sendCmd({cmd: 'set', gpu_power_limit_w: w});
+                this._scheduleRefresh();
+            });
+            this._gpuSub.menu.addMenuItem(it);
+            this._gpuItems[w] = it;
+        };
+        add('Max (default)', 0);
+        for (const w of presets)
+            add(`${w} W`, w);
+
+        this.menu.addMenuItem(this._gpuSub, 2);
+    }
+
     _scheduleRefresh() {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
             this.refresh();
@@ -197,6 +226,10 @@ class PhanToggle extends QuickMenuToggle {
         if (!this._powerSub && power.available)
             this._buildPower(power);
 
+        const gpuInfo = isObj(st.gpu) ? st.gpu : {};
+        if (!this._gpuSub && gpuInfo.available)
+            this._buildGpu(gpuInfo);
+
         const cfg = isObj(st.config) ? st.config : {};
         const profile = typeof st.active_profile === 'string' ? st.active_profile : '';
         const auto = st.mode === 'auto';
@@ -205,7 +238,7 @@ class PhanToggle extends QuickMenuToggle {
         const temps = isObj(st.temps) ? st.temps : {};
         const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
         const cpu = num(temps['coretemp:Package id 0'] ?? temps['dell_ddv:CPU']);
-        const gpu = num(temps['dell_ddv:Video']);
+        const gpuTemp = num(gpuInfo.temp) ?? num(temps['dell_ddv:Video']);
         const lbl = PROFILE_LABEL[profile] || profile || '—';
 
         this.iconName = st.emergency
@@ -247,11 +280,26 @@ class PhanToggle extends QuickMenuToggle {
             }
         }
 
+        // GPU submenu: label shows the live cap + draw, ornament marks the cap
+        if (this._gpuSub) {
+            const cap = num(gpuInfo.cap_w) || 0;       // 0 = default/max
+            const lim = num(gpuInfo.limit);
+            const draw = num(gpuInfo.draw);
+            this._gpuSub.label.text = cap > 0
+                ? `GPU power: ${cap} W`
+                : `GPU power: ${lim != null ? `${Math.round(lim)} W` : 'max'}${
+                    draw != null ? ` · ${Math.round(draw)} W draw` : ''}`;
+            for (const [w, item] of Object.entries(this._gpuItems)) {
+                const active = Number(w) === cap;
+                item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+            }
+        }
+
         const line = [];
         if (cpu != null)
             line.push(`CPU ${Math.round(cpu)}°`);
-        if (gpu != null)
-            line.push(`GPU ${Math.round(gpu)}°`);
+        if (gpuTemp != null)
+            line.push(`GPU ${Math.round(gpuTemp)}°`);
         const fans = Object.values(isObj(st.fans) ? st.fans : {})
             .filter(isObj)
             .map(f => `${String(f.label || 'Fan').replace(' Fan', '')} ${f.rpm ? f.rpm : 'off'}`);

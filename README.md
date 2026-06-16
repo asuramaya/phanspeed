@@ -33,6 +33,8 @@ A Quick Settings pill that:
   let it **scale power with temperature**, and see live CPU/GPU temps and fan RPM.
 - **Quiet on battery** — optionally force a calm profile + low CPU power whenever
   you unplug.
+- **Discrete GPU** (NVIDIA, optional) — cap GPU power and see GPU temp / draw /
+  utilization in the pill.
 - Turns red on the **emergency override** (forced max cooling above 90 °C, which
   also drops the CPU to its base TDP to cut heat at the source).
 
@@ -105,8 +107,13 @@ journalctl -u phanspeed -f           # live log (profile changes, emergencies)
 cat /run/phanspeed/status.json       # what the pill sees
 cat /sys/firmware/acpi/platform_profile   # active profile right now
 gnome-extensions info phanspeed@local     # extension state
+sudo phanspeedd --selftest                # verify controllable hardware
+systemctl status phanspeed-healthcheck.timer   # auto-restart watchdog
 ./uninstall.sh
 ```
+
+A `phanspeed-healthcheck.timer` runs every ~2 min and restarts the daemon if it
+ever goes inactive or its status snapshot goes stale.
 
 ## Tuning
 
@@ -123,6 +130,10 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `power_floor_w` | the cap when hot under `power_auto`; `0` = base TDP |
 | `battery_aware` | on battery, force `battery_profile` + cap CPU to base TDP |
 | `battery_profile` | profile to use while on battery (default `quiet`) |
+| `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
+
+Under `power_auto` the CPU cap ramps **smoothly** from the firmware default at
+`quiet_below` down to the floor at `cool_above`.
 
 The 5770 runs hot. `platform_profile` only changes *fan* behaviour — to actually
 cut the heat, cap CPU power: set `power_limit_w` (e.g. the chip's base TDP) or use

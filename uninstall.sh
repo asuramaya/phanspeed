@@ -9,10 +9,13 @@ EXT_UUID="phanspeed@local"
 if [[ $EUID -ne 0 ]]; then exec sudo -E bash "$0" "$@"; fi
 
 echo "== uninstalling PhanSpeed =="
+systemctl disable --now phanspeed-healthcheck.timer 2>/dev/null || true
 systemctl disable --now phanspeed.service 2>/dev/null || true
 echo balanced > /sys/firmware/acpi/platform_profile 2>/dev/null || true
-rm -f /etc/systemd/system/phanspeed.service
-rm -f /usr/local/bin/phanspeedd
+rm -f /etc/systemd/system/phanspeed.service \
+      /etc/systemd/system/phanspeed-healthcheck.service \
+      /etc/systemd/system/phanspeed-healthcheck.timer
+rm -f /usr/local/bin/phanspeedd /usr/local/bin/phanspeed-healthcheck
 systemctl daemon-reload
 
 # disable + remove the extension as the user

@@ -20,7 +20,7 @@ jobs:
           ruff check .
 
       - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh make-extension-zip.sh
+        run: shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck
 
       - name: Shell scripts parse
         run: bash -n install.sh && bash -n uninstall.sh

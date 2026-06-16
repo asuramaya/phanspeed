@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the PhanSpeed healthcheck periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=20s
+
+[Install]
+WantedBy=timers.target

@@ -41,8 +41,11 @@ SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 # No network of any kind (daemon only binds an AF_UNIX socket):
 IPAddressDeny=any
-# No device access needed:
+# No device access except the NVIDIA nodes nvidia-smi needs (GPU power control):
 DevicePolicy=closed
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia0 rw
+DeviceAllow=/dev/nvidia-uvm rw
 KeyringMode=private
 UMask=0077
 # NOTE: do NOT set ProtectKernelTunables=yes — it remounts /sys read-only and

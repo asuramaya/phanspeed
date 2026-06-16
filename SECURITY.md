@@ -29,7 +29,9 @@ Hardening in place (see the daemon and `systemd/phanspeed.service`):
 - **DoS-resistant** — 64 KB read cap, per-command rate limiting.
 - **Sandboxed unit** — zero capabilities, `ProtectSystem=strict`,
   `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service`, private
-  tmp/devices/keyring, least-privilege file modes.
+  tmp/devices/keyring, least-privilege file modes. `DevicePolicy=closed` with a
+  `DeviceAllow` for only the NVIDIA nodes (for optional GPU power control via
+  `nvidia-smi`); no other device access.
 
 Adversarial tests live in `tests/attack_socket.py` and assert the failsafe
 invariants hold under fuzzing. Please keep them passing in any security-relevant

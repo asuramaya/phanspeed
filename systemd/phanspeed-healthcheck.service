@@ -1,0 +1,7 @@
+[Unit]
+Description=PhanSpeed healthcheck (restart the daemon if it wedged)
+After=phanspeed.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/phanspeed-healthcheck

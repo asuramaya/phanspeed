@@ -24,16 +24,18 @@ Control: line-delimited JSON over /run/phanspeed/control.sock (mode 0666).
 Config : /etc/phanspeed/config.json (hot-reloaded).
 """
 
-import os
-import sys
-import json
-import time
+import atexit
 import glob
+import json
+import os
+import shutil
 import signal
 import socket
 import struct
-import atexit
+import subprocess
+import sys
 import threading
+import time
 import traceback
 
 RUN_DIR = "/run/phanspeed"
@@ -73,6 +75,7 @@ DEFAULTS = {
     "power_floor_w": 0,             # cap when hot under power_auto; 0 = base TDP
     "battery_aware": False,         # force a calm profile + low power on battery
     "battery_profile": "quiet",     # profile to use while on battery
+    "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -127,6 +130,7 @@ def sanitize_config(cfg, choices, sensors):
         return int(max(PL_MIN_W, min(PL_MAX_W, v)))
     cfg["power_limit_w"] = _clamp_power(cfg.get("power_limit_w"))
     cfg["power_floor_w"] = _clamp_power(cfg.get("power_floor_w"))
+    cfg["gpu_power_limit_w"] = _clamp_power(cfg.get("gpu_power_limit_w"))
     cfg["power_auto"] = bool(cfg.get("power_auto")) if isinstance(
         cfg.get("power_auto"), bool) else False
     cfg["battery_aware"] = bool(cfg.get("battery_aware")) if isinstance(
@@ -207,6 +211,7 @@ class Hardware:
             self.level_profile[lvl] = next(
                 (n for n in names if n in self.choices), self.choices[0])
         self._discover_rapl()
+        self.gpu = Gpu()
 
     # ---- RAPL CPU power limit (PL1) ---- #
     def _discover_rapl(self):
@@ -310,6 +315,77 @@ class Hardware:
 
 
 # --------------------------------------------------------------------------- #
+# Discrete NVIDIA GPU (optional, via nvidia-smi)
+# --------------------------------------------------------------------------- #
+NVIDIA_SMI = shutil.which("nvidia-smi")
+_GPU_FIELDS = ("name,temperature.gpu,power.draw,utilization.gpu,"
+               "enforced.power.limit,power.default_limit,"
+               "power.min_limit,power.max_limit")
+
+
+class Gpu:
+    def __init__(self):
+        self.available = False
+        self.name = None
+        self.min_w = self.max_w = self.default_w = None
+        self._cache = None
+        self._cache_t = 0.0
+        if not NVIDIA_SMI:
+            return
+        info = self.query(max_age=0)
+        if info:
+            self.available = True
+            self.name = info.get("name")
+            self.min_w = info.get("min")
+            self.max_w = info.get("max")
+            self.default_w = info.get("default")
+
+    def _run(self, args, timeout):
+        try:
+            return subprocess.run([NVIDIA_SMI, *args], capture_output=True,
+                                  text=True, timeout=timeout)
+        except Exception as e:
+            log(f"nvidia-smi failed: {e}")
+            return None
+
+    def query(self, max_age=1.0):
+        now = time.monotonic()
+        if self._cache is not None and now - self._cache_t < max_age:
+            return self._cache
+        r = self._run(["--query-gpu=" + _GPU_FIELDS,
+                       "--format=csv,noheader,nounits", "-i", "0"], timeout=2)
+        if not r or r.returncode != 0 or not r.stdout.strip():
+            return None
+        p = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
+        if len(p) < 8:
+            return None
+
+        def f(x):
+            try:
+                return float(x)
+            except ValueError:
+                return None
+        info = {"name": p[0], "temp": f(p[1]), "draw": f(p[2]), "util": f(p[3]),
+                "limit": f(p[4]), "default": f(p[5]), "min": f(p[6]), "max": f(p[7])}
+        self._cache, self._cache_t = info, now
+        return info
+
+    def set_limit_w(self, watts):
+        if not self.available or self.min_w is None:
+            return False
+        watts = int(max(self.min_w, min(self.max_w, watts)))
+        r = self._run(["-pl", str(watts)], timeout=5)
+        if r and r.returncode == 0:
+            self._cache = None      # force re-read next query
+            return True
+        return False
+
+    def restore(self):
+        if self.available and self.default_w:
+            self.set_limit_w(self.default_w)
+
+
+# --------------------------------------------------------------------------- #
 # Auto policy: temperature -> cooling level, with hysteresis on the way down
 # --------------------------------------------------------------------------- #
 def target_level(temp, lo, hi, current, hyst):
@@ -341,7 +417,8 @@ class Daemon:
         self._stop = threading.Event()
         self._cmd_times = []           # timestamps of recent config-changing cmds
         self._power_dirty = False      # have we changed the CPU power limit?
-        self._power_level = 1          # cooling level used by temp-coupled power
+        self._gpu_last_set = None       # last GPU power limit we wrote (W)
+        self._gpu_dirty = False         # have we changed the GPU power limit?
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -419,10 +496,11 @@ class Daemon:
                     log(f"emergency cleared {crit:.0f}°C <= {lo}°C")
                     self.emergency = False
 
+            battery = bool(self.config.get("battery_aware") and self.hw.on_battery())
             if self.emergency:
                 self.hw.set_profile(self.hw.level_profile[2])
                 self._apply_power(emergency=True)
-            elif self.config.get("battery_aware") and self.hw.on_battery():
+            elif battery:
                 bp = self.config.get("battery_profile")
                 self.hw.set_profile(bp if bp in self.hw.choices
                                     else self.hw.level_profile[0])
@@ -438,8 +516,29 @@ class Daemon:
                         self.level, self.config["hysteresis"])
                     self.hw.set_profile(self.hw.level_profile[self.level])
                 self._apply_power(emergency=False)
+            self._apply_gpu(self.emergency, battery)
             self.applied_profile = self.hw.get_profile()
         self.write_status()      # always publish (incl. during emergency)
+
+    def _apply_gpu(self, emergency, battery):
+        """Cap the discrete GPU's power. Emergency/battery -> minimum; otherwise
+        the configured cap (0 = leave default). Only writes on change (nvidia-smi
+        -pl is slow), so it is not reasserted every loop."""
+        g = self.hw.gpu
+        if not g.available or g.min_w is None:
+            return
+        lim = self.config.get("gpu_power_limit_w", 0)
+        if emergency or battery:
+            target = int(g.min_w)
+        elif lim and lim > 0:
+            target = int(max(g.min_w, min(g.max_w, lim)))
+        elif self._gpu_dirty and g.default_w:
+            target = int(g.default_w)
+        else:
+            return
+        if target != self._gpu_last_set and g.set_limit_w(target):
+            self._gpu_last_set = target
+            self._gpu_dirty = not (g.default_w and target == int(g.default_w))
 
     def _apply_power(self, emergency, battery=False):
         """Reassert the CPU power cap (0 = leave firmware default). During an
@@ -457,11 +556,19 @@ class Daemon:
             if t is None:
                 cap = 0
             else:
-                self._power_level = target_level(
-                    t, self.config["quiet_below"], self.config["cool_above"],
-                    self._power_level, self.config["hysteresis"])
+                # smooth ramp: ceiling at quiet_below -> floor at cool_above
+                lo, hi = self.config["quiet_below"], self.config["cool_above"]
+                ceil = (round(self.hw.power_default_uw / 1e6)
+                        if self.hw.power_default_uw else base)
                 floor = self.config.get("power_floor_w") or base
-                cap = (0, base, floor)[self._power_level]
+                floor = max(PL_MIN_W, min(floor, ceil))
+                if t <= lo:
+                    cap = ceil
+                elif t >= hi:
+                    cap = floor
+                else:
+                    frac = (t - lo) / (hi - lo)
+                    cap = round((ceil - (ceil - floor) * frac) / 5) * 5
         else:
             cap = self.config.get("power_limit_w", 0)
 
@@ -532,8 +639,27 @@ class Daemon:
                     "default_w": (round(self.hw.power_default_uw / 1e6)
                                   if self.hw.power_default_uw else None),
                 },
+                "gpu": self._gpu_status(),
                 "config": self.config,
             }
+
+    def _gpu_status(self):
+        g = self.hw.gpu
+        if not g.available:
+            return {"available": False}
+        info = g.query() or {}
+        return {
+            "available": True,
+            "name": g.name,
+            "temp": info.get("temp"),
+            "draw": info.get("draw"),
+            "util": info.get("util"),
+            "limit": info.get("limit"),
+            "min_w": g.min_w,
+            "max_w": g.max_w,
+            "default_w": g.default_w,
+            "cap_w": self.config.get("gpu_power_limit_w", 0),
+        }
 
     def handle_cmd(self, msg):
         cmd = msg.get("cmd")
@@ -557,7 +683,7 @@ class Daemon:
                     changes["sensor"] = sv
                 else:
                     rejected.append("sensor")
-            for pk in ("power_limit_w", "power_floor_w"):
+            for pk in ("power_limit_w", "power_floor_w", "gpu_power_limit_w"):
                 if pk in msg:
                     # 0 = unmanaged; otherwise a real number (clamped later)
                     if _coerce_num(msg[pk], 0, PL_MAX_W) is None:
@@ -674,6 +800,7 @@ class Daemon:
         try:
             self.hw.set_profile(name)
             self.hw.restore_power()
+            self.hw.gpu.restore()
         except Exception as e:
             log(f"restore error: {e}")
 
@@ -697,7 +824,31 @@ class Daemon:
         self.restore()
 
 
+def selftest():
+    """Verify the controllable hardware is reachable. Exit 0 = healthy."""
+    try:
+        hw = Hardware()
+    except SystemExit as e:
+        print(f"FAIL: {e}")
+        return 1
+    ok = True
+    prof = hw.get_profile()
+    print(f"profile      : {prof}  (choices: {' '.join(hw.choices)})")
+    if prof not in hw.choices:
+        ok = False
+    print(f"sensors      : {len(hw.sensors)} temp, {len(hw.fans)} fan")
+    print(f"watchdog     : {hw.crit_sensor_ids}  -> {hw.max_crit_temp()}°C")
+    print(f"cpu power    : {'yes ' + str(hw.get_power_w()) + 'W' if hw.has_power else 'n/a'}")
+    print(f"gpu          : {hw.gpu.name if hw.gpu.available else 'n/a'}")
+    if hw.max_crit_temp() is None:
+        ok = False
+    print("RESULT       :", "OK" if ok else "DEGRADED")
+    return 0 if ok else 1
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        sys.exit(selftest())
     if os.geteuid() != 0:
         sys.exit("phanspeedd must run as root.")
     Daemon().run()

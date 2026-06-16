@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Restart phanspeedd if it is inactive or its status snapshot has gone stale
+# (i.e. the control loop wedged). Run periodically by phanspeed-healthcheck.timer.
+set -euo pipefail
+
+STATUS=/run/phanspeed/status.json
+MAX_AGE=30   # seconds — well above the 3s poll interval
+
+restart() {
+  echo "[healthcheck] $1 — restarting phanspeed"
+  systemctl restart phanspeed
+}
+
+if ! systemctl is-active --quiet phanspeed; then
+  restart "service not active"
+  exit 0
+fi
+
+if [[ ! -f "$STATUS" ]]; then
+  restart "status file missing"
+  exit 0
+fi
+
+age=$(( $(date +%s) - $(stat -c %Y "$STATUS") ))
+if (( age > MAX_AGE )); then
+  restart "status stale (${age}s old)"
+  exit 0
+fi
+
+echo "[healthcheck] ok (status ${age}s old)"

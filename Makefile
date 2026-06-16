@@ -21,7 +21,7 @@ uninstall:
 
 lint:
 	ruff check .
-	shellcheck install.sh uninstall.sh make-extension-zip.sh
+	shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck
 
 verify-unit:
 	@systemd-analyze verify ./systemd/phanspeed.service 2>&1 \

@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-06-15
+
+### Added
+- **Discrete GPU support** (NVIDIA, via `nvidia-smi`) — cap GPU power
+  (`gpu_power_limit_w`), and surface GPU temp / draw / utilization in the pill's
+  new GPU submenu. Emergency and battery modes drop the GPU to its minimum.
+- **Continuous CPU power scaling** — `power_auto` now ramps the cap smoothly with
+  temperature (ceiling at `quiet_below` → floor at `cool_above`) instead of three
+  discrete steps.
+- **Self-healing** — `phanspeedd --selftest` (verifies controllable hardware) and
+  a `phanspeed-healthcheck.timer` that restarts the daemon if it goes inactive or
+  its status snapshot goes stale.
+
+### Changed
+- Hardened unit gains `DeviceAllow` for the NVIDIA nodes only (still
+  `DevicePolicy=closed` for everything else).
+
 ## [0.4.0] — 2026-06-15
 
 ### Added
