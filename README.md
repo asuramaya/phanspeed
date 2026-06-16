@@ -31,6 +31,8 @@ A Quick Settings pill that:
 - **Open the menu** → pick a profile manually (Quiet/Balanced/Cool/Performance),
   set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat) or
   let it **scale power with temperature**, and see live CPU/GPU temps and fan RPM.
+- **Quiet on battery** — optionally force a calm profile + low CPU power whenever
+  you unplug.
 - Turns red on the **emergency override** (forced max cooling above 90 °C, which
   also drops the CPU to its base TDP to cut heat at the source).
 
@@ -119,6 +121,8 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `power_limit_w` | CPU sustained power cap (Intel RAPL PL1) in W; `0` = unmanaged |
 | `power_auto` | scale the power cap with temperature (cool→full, warm→base TDP, hot→floor) |
 | `power_floor_w` | the cap when hot under `power_auto`; `0` = base TDP |
+| `battery_aware` | on battery, force `battery_profile` + cap CPU to base TDP |
+| `battery_profile` | profile to use while on battery (default `quiet`) |
 
 The 5770 runs hot. `platform_profile` only changes *fan* behaviour — to actually
 cut the heat, cap CPU power: set `power_limit_w` (e.g. the chip's base TDP) or use
@@ -146,7 +150,8 @@ with your model and `diag.py` output.
 ## Project
 
 - [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) ·
-  [Changelog](CHANGELOG.md)
-- Adversarial test suite: `python3 tests/attack_socket.py`
+  [Changelog](CHANGELOG.md) · [eGO submission](SUBMISSION.md)
+- Common tasks: `make help` (install, lint, test, pack, check)
+- Adversarial test suite: `make test` (`python3 tests/attack_socket.py`)
 - License: [GPL-3.0-or-later](LICENSE)
 

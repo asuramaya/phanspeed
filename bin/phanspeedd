@@ -71,6 +71,8 @@ DEFAULTS = {
     "power_limit_w": 0,             # CPU PL1 cap in W; 0 = unmanaged (leave default)
     "power_auto": False,            # scale the CPU power cap with temperature
     "power_floor_w": 0,             # cap when hot under power_auto; 0 = base TDP
+    "battery_aware": False,         # force a calm profile + low power on battery
+    "battery_profile": "quiet",     # profile to use while on battery
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -127,6 +129,11 @@ def sanitize_config(cfg, choices, sensors):
     cfg["power_floor_w"] = _clamp_power(cfg.get("power_floor_w"))
     cfg["power_auto"] = bool(cfg.get("power_auto")) if isinstance(
         cfg.get("power_auto"), bool) else False
+    cfg["battery_aware"] = bool(cfg.get("battery_aware")) if isinstance(
+        cfg.get("battery_aware"), bool) else False
+    if cfg.get("battery_profile") not in choices:
+        cfg["battery_profile"] = ("quiet" if "quiet" in choices
+                                  else (choices[0] if choices else "quiet"))
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -279,6 +286,17 @@ class Hardware:
         vals = [v for v in vals if v is not None]
         return max(vals) if vals else None
 
+    def on_battery(self):
+        """True if running on battery. If no AC adapter is reported (desktop),
+        treat as on AC."""
+        mains = []
+        for d in glob.glob("/sys/class/power_supply/*"):
+            if _read(os.path.join(d, "type")) == "Mains":
+                online = _read_int(os.path.join(d, "online"))
+                if online is not None:
+                    mains.append(online)
+        return bool(mains) and not any(mains)
+
     def get_profile(self):
         return _read(PROFILE_PATH)
 
@@ -404,11 +422,14 @@ class Daemon:
             if self.emergency:
                 self.hw.set_profile(self.hw.level_profile[2])
                 self._apply_power(emergency=True)
-                self.applied_profile = self.hw.get_profile()
-                return
-
-            if self.config["mode"] == "manual":
+            elif self.config.get("battery_aware") and self.hw.on_battery():
+                bp = self.config.get("battery_profile")
+                self.hw.set_profile(bp if bp in self.hw.choices
+                                    else self.hw.level_profile[0])
+                self._apply_power(emergency=False, battery=True)
+            elif self.config["mode"] == "manual":
                 self.hw.set_profile(self.config["manual_profile"])
+                self._apply_power(emergency=False)
             else:  # auto
                 t = self.policy_temp()
                 if t is not None:
@@ -416,18 +437,18 @@ class Daemon:
                         t, self.config["quiet_below"], self.config["cool_above"],
                         self.level, self.config["hysteresis"])
                     self.hw.set_profile(self.hw.level_profile[self.level])
-            self._apply_power(emergency=False)
+                self._apply_power(emergency=False)
             self.applied_profile = self.hw.get_profile()
-        self.write_status()
+        self.write_status()      # always publish (incl. during emergency)
 
-    def _apply_power(self, emergency):
+    def _apply_power(self, emergency, battery=False):
         """Reassert the CPU power cap (0 = leave firmware default). During an
-        emergency, clamp to base TDP. When power_auto is on, scale the cap with
-        temperature: cool -> full, warm -> base TDP, hot -> floor."""
+        emergency or on battery, clamp to base TDP. When power_auto is on, scale
+        the cap with temperature: cool -> full, warm -> base TDP, hot -> floor."""
         if not self.hw.has_power:
             return
         base = self.hw.power_base_w
-        if emergency:
+        if emergency or battery:
             cap = self.config.get("power_limit_w", 0)
             if base:
                 cap = base if cap == 0 else min(cap, base)
@@ -490,6 +511,7 @@ class Daemon:
             return {
                 "ok": True,
                 "emergency": self.emergency,
+                "on_battery": self.hw.on_battery(),
                 "mode": self.config["mode"],
                 "active_profile": self.hw.get_profile(),
                 "choices": self.hw.choices,
@@ -547,6 +569,16 @@ class Daemon:
                     changes["power_auto"] = msg["power_auto"]
                 else:
                     rejected.append("power_auto")
+            if "battery_aware" in msg:
+                if isinstance(msg["battery_aware"], bool):
+                    changes["battery_aware"] = msg["battery_aware"]
+                else:
+                    rejected.append("battery_aware")
+            if "battery_profile" in msg:
+                if msg["battery_profile"] in self.hw.choices:
+                    changes["battery_profile"] = msg["battery_profile"]
+                else:
+                    rejected.append("battery_profile")
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)

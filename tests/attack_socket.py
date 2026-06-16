@@ -56,6 +56,8 @@ def check_invariants(cfg, where):
             assert isinstance(pw, int) and not isinstance(pw, bool), f"{pk} type"
             assert pw == 0 or 8 <= pw <= 250, f"{pk} out of safe range"
         assert isinstance(cfg["power_auto"], bool), "power_auto type"
+        assert isinstance(cfg["battery_aware"], bool), "battery_aware type"
+        assert cfg["battery_profile"] in d.hw.choices, "battery_profile invalid"
     except AssertionError as e:
         fails.append(f"[{where}] invariant: {e}")
 
@@ -96,7 +98,8 @@ for msg in HOSTILE:
 random.seed(1)
 KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
         "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
-        "rate_limit", "power_limit_w", "power_floor_w", "power_auto"]
+        "rate_limit", "power_limit_w", "power_floor_w", "power_auto",
+        "battery_aware", "battery_profile"]
 VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto", "cool"]
 for _ in range(3000):
     msg = {"cmd": random.choice(["set", "get", "x"])}

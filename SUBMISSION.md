@@ -33,11 +33,11 @@ Upload it at <https://extensions.gnome.org/upload/> while signed in.
   The privileged work (writing `platform_profile` / RAPL) is done by a separate
   root daemon; the extension only displays state and sends user-initiated
   commands. This is the standard split for hardware that needs root.
-- **Synchronous IO.** Status is read from a small local file on a 2 s timer;
-  the control socket uses a 2 s connect timeout and is only touched on a click.
-  If a reviewer asks, the socket send can be moved to
-  `Gio.SocketClient.connect_async` / `output_stream.write_all_async` — tracked as
-  a follow-up; behaviour is unchanged.
+- **IO model.** The control socket is **fully asynchronous**
+  (`connect_async` → `write_all_async` → `close_async`, with a Cancellable that
+  is cancelled in `disable()`), so it can never block the compositor. Status is
+  read from a small local file (`/run/phanspeed/status.json`, tmpfs) on a 2 s
+  timer — a negligible synchronous read.
 
 ## After approval
 

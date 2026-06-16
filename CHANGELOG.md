@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-06-15
+
+### Added
+- **Quiet on battery** (`battery_aware` + `battery_profile`) — on battery, force
+  a calm profile and cap the CPU to base TDP; a "Quiet on battery" switch in the
+  pill, and `on_battery` in status.
+- **Makefile** — `install`, `uninstall`, `lint`, `test`, `pack`, `check`.
+
+### Changed
+- The extension's control socket is now **fully asynchronous**
+  (`connect_async`/`write_all_async` with a Cancellable cancelled on disable) —
+  it can never block the compositor. eGO submission notes updated.
+
+### Fixed
+- The thermal **emergency state is now published to `status.json`** (the pill
+  shows it); previously the emergency path returned before writing status.
+
 ## [0.3.0] — 2026-06-15
 
 ### Added

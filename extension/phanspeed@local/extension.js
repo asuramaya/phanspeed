@@ -44,21 +44,36 @@ function readStatus() {
     }
 }
 
+// Cancellable for in-flight socket ops; reset on enable, cancelled on disable.
+let _cancellable = null;
+
 function sendCmd(obj) {
-    try {
-        const client = new Gio.SocketClient();
-        client.timeout = 2;             // never let a hung daemon freeze the shell
-        const addr = new Gio.UnixSocketAddress({path: SOCK_PATH});
-        const conn = client.connect(addr, null);
-        const out = conn.get_output_stream();
-        out.write_all(new TextEncoder().encode(JSON.stringify(obj) + '\n'), null);
-        out.flush(null);
-        conn.close(null);
-        return true;
-    } catch (e) {
-        logError(e, 'PhanSpeed sendCmd');
-        return false;
-    }
+    // Fully asynchronous: connect -> write -> close, never blocking the shell.
+    const client = new Gio.SocketClient();
+    client.timeout = 2;
+    const addr = new Gio.UnixSocketAddress({path: SOCK_PATH});
+    const payload = new TextEncoder().encode(JSON.stringify(obj) + '\n');
+    const cancel = _cancellable;
+    client.connect_async(addr, cancel, (src, res) => {
+        let conn;
+        try {
+            conn = src.connect_finish(res);
+        } catch (e) {
+            if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                logError(e, 'PhanSpeed connect');
+            return;
+        }
+        conn.get_output_stream().write_all_async(
+            payload, GLib.PRIORITY_DEFAULT, cancel, (out, ores) => {
+                try {
+                    out.write_all_finish(ores);
+                } catch (e) {
+                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        logError(e, 'PhanSpeed write');
+                }
+                conn.close_async(GLib.PRIORITY_DEFAULT, null, null);
+            });
+    });
 }
 
 const PhanToggle = GObject.registerClass(
@@ -79,6 +94,16 @@ class PhanToggle extends QuickMenuToggle {
         // CPU power-limit submenu (added only when RAPL is available)
         this._powerSub = null;
         this._powerItems = {};
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        // Quiet on battery
+        this._batteryItem = new PopupMenu.PopupSwitchMenuItem('Quiet on battery', false);
+        this._batteryItem.connect('toggled', (_i, state) => {
+            sendCmd({cmd: 'set', battery_aware: state});
+            this._scheduleRefresh();
+        });
+        this.menu.addMenuItem(this._batteryItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
@@ -172,8 +197,11 @@ class PhanToggle extends QuickMenuToggle {
         if (!this._powerSub && power.available)
             this._buildPower(power);
 
+        const cfg = isObj(st.config) ? st.config : {};
         const profile = typeof st.active_profile === 'string' ? st.active_profile : '';
         const auto = st.mode === 'auto';
+        const onBattery = st.on_battery === true;
+        const batteryAware = cfg.battery_aware === true;
         const temps = isObj(st.temps) ? st.temps : {};
         const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
         const cpu = num(temps['coretemp:Package id 0'] ?? temps['dell_ddv:CPU']);
@@ -184,8 +212,11 @@ class PhanToggle extends QuickMenuToggle {
             ? 'power-profile-performance-symbolic'
             : (PROFILE_ICON[profile] || DEFAULT_ICON);
         this.checked = auto;
+        this._batteryItem.setToggleState(batteryAware);
 
         let sub = auto ? `Auto · ${lbl}` : lbl;
+        if (onBattery && batteryAware)
+            sub = `🔋 ${lbl}`;
         if (cpu != null)
             sub += ` · ${Math.round(cpu)}°`;
         if (st.emergency)
@@ -242,6 +273,7 @@ class PhanIndicator extends SystemIndicator {
 
 export default class PhanSpeedExtension extends Extension {
     enable() {
+        _cancellable = new Gio.Cancellable();
         this._indicator = new PhanIndicator();
         Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
         this._indicator.toggle.refresh();
@@ -255,6 +287,10 @@ export default class PhanSpeedExtension extends Extension {
         if (this._timeout) {
             GLib.source_remove(this._timeout);
             this._timeout = null;
+        }
+        if (_cancellable) {
+            _cancellable.cancel();
+            _cancellable = null;
         }
         this._indicator?.quickSettingsItems.forEach(i => i.destroy());
         this._indicator?.destroy();
