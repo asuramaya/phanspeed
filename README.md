@@ -170,8 +170,9 @@ with your model and `diag.py` output.
 
 ## Project
 
-- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) ·
-  [Changelog](CHANGELOG.md) · [eGO submission](SUBMISSION.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) ·
+  [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md) ·
+  [eGO submission](SUBMISSION.md)
 - Common tasks: `make help` (install, lint, test, pack, check)
 - Adversarial test suite: `make test` (`python3 tests/attack_socket.py`)
 - License: [GPL-3.0-or-later](LICENSE)
