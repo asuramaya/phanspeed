@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-06-16
+
+### Changed
+- **Finer CPU-power presets in the pill** — the "CPU power limit" submenu now
+  offers a five-step ladder (≈100/80/66/55/44 % of base TDP, e.g. 45/36/30/25/20 W
+  on a 45 W chip) instead of quarters, so a moderate cap — the sweet spot for a
+  thermally-limited machine (e.g. one running on a single working fan) — is
+  directly selectable.
+- **Installer writes the power/battery/GPU keys into the default config**, so all
+  tunables are visible in `/etc/phanspeed/config.json` from first install and
+  obviously persist across reboots (the daemon already saved them on every set).
+
 ## [0.6.0] — 2026-06-15
 
 ### Added

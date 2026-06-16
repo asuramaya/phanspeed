@@ -140,8 +140,10 @@ class PhanToggle extends QuickMenuToggle {
         const base = (typeof power.base_w === 'number' && power.base_w > 0)
             ? power.base_w : 45;
         const min = power.min_w || 8;
-        const presets = [...new Set([base, Math.round(base * 0.8),
-                                     Math.round(base * 0.6), Math.round(base * 0.4)])]
+        // a finer ladder than just quarters, so a moderate cap (~base*⅔, the
+        // sweet spot for a thermally-limited machine) is directly selectable
+        const presets = [...new Set([1.0, 0.8, 0.66, 0.55, 0.44]
+            .map(r => Math.round(base * r)))]
             .filter(w => w >= min).sort((a, b) => b - a);
 
         this._powerSub = new PopupMenu.PopupSubMenuMenuItem('CPU power limit', true);

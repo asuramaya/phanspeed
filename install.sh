@@ -51,7 +51,14 @@ if [[ ! -f /etc/phanspeed/config.json ]]; then
   "emergency_temp": 90,
   "emergency_clear_temp": 78,
   "allow_uids": [${USER_UID}],
-  "rate_limit": 10
+  "rate_limit": 10,
+  "power_limit_w": 0,
+  "power_auto": false,
+  "power_floor_w": 0,
+  "battery_aware": false,
+  "battery_profile": "quiet",
+  "gpu_power_limit_w": 0,
+  "gpu_persistence": false
 }
 JSON
 fi
