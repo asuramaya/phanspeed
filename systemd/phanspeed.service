@@ -13,9 +13,13 @@ RuntimeDirectory=phanspeed
 RuntimeDirectoryMode=0755
 
 # --- sandboxing ---------------------------------------------------------
-# The daemon owns every file it touches as root, so it needs no capabilities.
-CapabilityBoundingSet=
-AmbientCapabilities=
+# CAP_CHOWN is the ONLY capability the daemon keeps: it hands ownership of the
+# control socket and status file to the logged-in user, so the unprivileged pill
+# can read status and issue (SO_PEERCRED-gated) commands. Every other capability
+# is dropped — no CAP_DAC_OVERRIDE etc., the profile/RAPL nodes are root-writable
+# by their own mode bits so no override is needed.
+CapabilityBoundingSet=CAP_CHOWN
+AmbientCapabilities=CAP_CHOWN
 NoNewPrivileges=yes
 # Read-only filesystem; strict leaves /dev /proc /sys writable, so the
 # platform_profile write under /sys still works. Config dir re-allowed below.

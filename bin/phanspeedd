@@ -616,15 +616,16 @@ class Daemon:
             with os.fdopen(fd, "w") as f:
                 json.dump(self.status(), f)
             os.replace(tmp, STATUS_PATH)
+            # chmod BEFORE chown: once the file belongs to the user, a root
+            # process without CAP_FOWNER (we only hold CAP_CHOWN) can no longer
+            # chmod it. Setting the mode while root still owns it always works.
             uid = self._status_target_uid()
+            os.chmod(STATUS_PATH, 0o640 if uid is not None else 0o644)
             if uid is not None:
                 try:
                     os.chown(STATUS_PATH, uid, -1)
                 except OSError:
                     pass
-                os.chmod(STATUS_PATH, 0o640)
-            else:
-                os.chmod(STATUS_PATH, 0o644)  # no user identified; temps only
         except Exception as e:
             log(f"status write failed: {e}")
 

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] — 2026-06-16
+
+### Fixed
+- **Pill could never read status or send commands** — the unit dropped *all*
+  capabilities (`CapabilityBoundingSet=`), so the daemon's `chown` of the control
+  socket and status file to the logged-in user silently failed (EPERM). Both
+  stayed `root:root`, leaving the unprivileged pill locked out ("daemon offline").
+  The unit now grants exactly one capability, `CAP_CHOWN`, for that hand-off and
+  nothing else (verified `CapEff=…01`).
+- **`status.json` mode was wrong + logged an error every poll** — `write_status()`
+  chmod'd *after* chown, but once the file belongs to the user a root process
+  without `CAP_FOWNER` can't chmod it, so the mode stuck at `0600` and each cycle
+  logged "status write failed". Reordered to chmod-then-chown (matching the socket
+  path); the snapshot is now a clean `0640` owner+root.
+
 ## [0.7.0] — 2026-06-16
 
 ### Changed
