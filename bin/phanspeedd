@@ -89,7 +89,8 @@ DEFAULTS = {
     "battery_profile": "quiet",     # profile to use while on battery
     "battery_power_w": 0,           # tuned CPU cap on battery; 0 = base TDP
     "turbo": "auto",                # auto = leave alone | on | off (force boost)
-    "epp": "",                      # "" = leave alone | else an EPP preference
+    "epp": "",                      # AC/default EPP; "" = leave alone
+    "battery_epp": "",              # EPP on battery; "" = balance_power fallback
     "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
     "gpu_persistence": False,       # nvidia-smi -pm 1 (keeps driver loaded; desktops)
 }
@@ -159,9 +160,10 @@ def sanitize_config(cfg, choices, sensors):
                                   else (choices[0] if choices else "quiet"))
     if cfg.get("turbo") not in ("auto", "on", "off"):
         cfg["turbo"] = "auto"
-    ep = cfg.get("epp")
-    if not (isinstance(ep, str) and (ep == "" or ep in VALID_EPP)):
-        cfg["epp"] = ""
+    for ek in ("epp", "battery_epp"):
+        ev = cfg.get(ek)
+        if not (isinstance(ev, str) and (ev == "" or ev in VALID_EPP)):
+            cfg[ek] = ""
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -640,7 +642,7 @@ class Daemon:
             if emergency:
                 pref = "power"
             elif battery:
-                pref = "balance_power"
+                pref = self.config.get("battery_epp") or "balance_power"
             elif self.config["epp"]:
                 pref = self.config["epp"]
             if pref and pref in self.hw.epp_choices:
@@ -794,6 +796,7 @@ class Daemon:
                     "epp_available": self.hw.has_epp,
                     "epp": self.hw.get_epp(),
                     "epp_cfg": self.config.get("epp", ""),
+                    "battery_epp_cfg": self.config.get("battery_epp", ""),
                     "epp_choices": self.hw.epp_choices,
                 },
                 "config": self.config,
@@ -872,12 +875,13 @@ class Daemon:
                     changes["turbo"] = msg["turbo"]
                 else:
                     rejected.append("turbo")
-            if "epp" in msg:
-                ev = msg["epp"]
-                if isinstance(ev, str) and (ev == "" or ev in VALID_EPP):
-                    changes["epp"] = ev
-                else:
-                    rejected.append("epp")
+            for ek in ("epp", "battery_epp"):
+                if ek in msg:
+                    ev = msg[ek]
+                    if isinstance(ev, str) and (ev == "" or ev in VALID_EPP):
+                        changes[ek] = ev
+                    else:
+                        rejected.append(ek)
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)

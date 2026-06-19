@@ -233,6 +233,7 @@ def main():
     cfg0 = st.get("config") or {}
     emergency = cfg0.get("emergency_temp", 90)
     orig_plw = cfg0.get("power_limit_w", 0)        # restore this if we don't apply
+    epp_choices = (st.get("cpu_pref") or {}).get("epp_choices") or []
     ceiling = min(args.ceiling, emergency - 2)
     rapl = Rapl()
     print(f"chip base TDP: {rapl.base_w} W | firmware default PL1: "
@@ -259,11 +260,17 @@ def main():
         print(f"  battery (best MHz/W) : {batt['cap']} W "
               f"@ {batt['eff']:.0f} MHz/W")
         if args.apply or _confirm():
+            # write complete scenes: power cap + an EPP that matches each
+            # objective (AC = performance, battery = efficiency)
             changes = {"cmd": "set"}
             if args.target in ("ac", "both"):
                 changes["power_limit_w"] = ac["cap"]
+                if "performance" in epp_choices:
+                    changes["epp"] = "performance"
             if args.target in ("battery", "both"):
                 changes["battery_power_w"] = batt["cap"]
+                if "balance_power" in epp_choices:
+                    changes["battery_epp"] = "balance_power"
             sock_cmd(changes)
             applied = True
             print(f"applied + persisted: {[k for k in changes if k != 'cmd']}")

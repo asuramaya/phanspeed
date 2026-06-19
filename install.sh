@@ -61,6 +61,7 @@ if [[ ! -f /etc/phanspeed/config.json ]]; then
   "battery_power_w": 0,
   "turbo": "auto",
   "epp": "",
+  "battery_epp": "",
   "gpu_power_limit_w": 0,
   "gpu_persistence": false
 }

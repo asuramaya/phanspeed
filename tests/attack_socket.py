@@ -89,6 +89,7 @@ HOSTILE = [
     {"cmd": "set", "turbo": 1},                 # wrong type -> rejected
     {"cmd": "set", "epp": "turbocharged"},      # not a real EPP -> rejected
     {"cmd": "set", "epp": ["performance"]},     # list -> rejected
+    {"cmd": "set", "battery_epp": "zoom"},      # bad battery EPP -> rejected
     {"cmd": "wat"}, {"cmd": 123}, {}, {"cmd": "get"},
 ]
 for msg in HOSTILE:
@@ -104,7 +105,7 @@ KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
         "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
         "rate_limit", "power_limit_w", "power_floor_w", "battery_power_w",
         "power_auto", "battery_aware", "battery_profile", "gpu_power_limit_w",
-        "turbo", "epp"]
+        "turbo", "epp", "battery_epp"]
 VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto",
         "cool", "on", "off", "performance", "balance_power", ""]
 for _ in range(3000):

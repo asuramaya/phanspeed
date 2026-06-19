@@ -50,7 +50,8 @@ def check(cfg, where):
         for k in ("power_auto", "battery_aware", "gpu_persistence"):
             assert isinstance(cfg[k], bool), f"{k} type"
         assert cfg["turbo"] in ("auto", "on", "off"), "bad turbo"
-        assert cfg["epp"] == "" or cfg["epp"] in m.VALID_EPP, "bad epp"
+        for ek in ("epp", "battery_epp"):
+            assert cfg[ek] == "" or cfg[ek] in m.VALID_EPP, f"bad {ek}"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
     except AssertionError as e:
         fails.append(f"[{where}] {e}")
@@ -76,7 +77,8 @@ HOSTILE = [
     {"allow_uids": "everyone", "rate_limit": float("nan")},
     {"power_auto": "yes", "battery_aware": 1, "gpu_persistence": []},
     {"turbo": "maybe", "epp": "turbocharged"},
-    {"turbo": 1, "epp": ["performance"]},
+    {"turbo": 1, "epp": ["performance"], "battery_epp": 7},
+    {"battery_epp": "fast"},
 ]
 for h in HOSTILE:
     cfg = m.sanitize_config(dict(m.DEFAULTS, **h), CHOICES, SENSORS)
@@ -99,10 +101,12 @@ for _ in range(8000):
 cfg = m.sanitize_config(dict(m.DEFAULTS, mode="manual", manual_profile="cool",
                              power_limit_w=35, gpu_power_limit_w=40,
                              battery_aware=True, turbo="off",
-                             epp="balance_power"), CHOICES, SENSORS)
+                             epp="performance", battery_epp="balance_power"),
+                        CHOICES, SENSORS)
 assert cfg["manual_profile"] == "cool" and cfg["power_limit_w"] == 35
 assert cfg["gpu_power_limit_w"] == 40 and cfg["battery_aware"] is True
-assert cfg["turbo"] == "off" and cfg["epp"] == "balance_power"
+assert cfg["turbo"] == "off" and cfg["epp"] == "performance"
+assert cfg["battery_epp"] == "balance_power"
 print("legit values preserved OK")
 
 if fails:

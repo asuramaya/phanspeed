@@ -141,7 +141,8 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `battery_profile` | profile to use while on battery (default `quiet`) |
 | `battery_power_w` | tuned CPU cap to use on battery (set by `phanspeed-tune`); `0` = base TDP |
 | `turbo` | `auto` (leave alone) · `on` · `off` — force CPU turbo/boost; emergency/battery force it off |
-| `epp` | HWP energy/perf preference (`performance`…`power`); `""` = leave alone |
+| `epp` | HWP energy/perf preference on AC (`performance`…`power`); `""` = leave alone |
+| `battery_epp` | EPP to use on battery; `""` = `balance_power` fallback |
 | `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
 | `gpu_persistence` | enable `nvidia-smi -pm 1` (mainly for desktops; off by default) |
 
@@ -155,8 +156,12 @@ closed-loop sweep: it drives the RAPL cap under a controlled all-core load,
 measures steady-state temperature, package power and clock at each step, and
 derives two operating points — the **highest cap that stays under a thermal
 ceiling** (AC, max sustained performance) and the **best MHz-per-watt knee**
-(battery). With `--apply` it writes both into the config (`power_limit_w` +
-`battery_power_w`) so the daemon picks the right one per plug-state.
+(battery). With `--apply` it writes a complete **scene** for each state — power cap
+*plus* a matching EPP (`performance` on AC, `balance_power` on battery) — into the
+config (`power_limit_w`/`epp` and `battery_power_w`/`battery_epp`), so the daemon
+applies the right whole bundle per plug-state. On a voltage-locked machine (no
+undervolting), capping power at the efficiency knee + the right EPP is the closest
+equivalent to undervolting you can get.
 
 ```bash
 sudo phanspeed-tune --dry-run                 # show the plan, no stress

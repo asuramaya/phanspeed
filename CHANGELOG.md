@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-06-19
+
+### Added
+- **Adaptive power+EPP scenes** — the closest equivalent to undervolting on a
+  voltage-locked machine. New `battery_epp` config makes the per-state EPP fully
+  tunable (was a hardcoded `balance_power` on battery): AC uses `epp`, battery uses
+  `battery_epp` (falling back to `balance_power`), emergency still forces `power`.
+- **`phanspeed-tune` now writes complete scenes** — `--apply` sets a power cap
+  *and* a matching EPP for each state (AC → `performance` + max-perf cap; battery →
+  `balance_power` + efficiency-knee cap), so each plug-state gets a coherent
+  power/governor bundle instead of just a wattage.
+- status `cpu_pref.battery_epp_cfg`; installer seeds `battery_epp`; both fuzz
+  suites cover it.
+
+### Note
+Undervolting was verified **locked** on the Precision 5770 (OC mailbox MSR 0x150
+swallows the offset — Plundervolt/BIOS lock), so operating at the efficiency knee
+via power cap + EPP is the supported substitute. Re-enabling Turbo Boost in BIOS
+remains the largest available performance gain.
+
 ## [0.9.0] — 2026-06-19
 
 ### Added
