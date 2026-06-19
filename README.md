@@ -1,7 +1,8 @@
 # PhanSpeed
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![CI](https://github.com/asuramaya/phanspeed/actions/workflows/ci.yml/badge.svg)](https://github.com/asuramaya/phanspeed/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/asuramaya/phanspeed?sort=semver)](https://github.com/asuramaya/phanspeed/releases/latest)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![No deps](https://img.shields.io/badge/dependencies-stdlib%20only-success)
 
 Dell thermal/fan control for GNOME, living where it belongs — a **Quick
@@ -104,7 +105,13 @@ SHA256 against the release's `SHA256SUMS`. Disable it any time with
 `sudo systemctl disable --now phanspeed-update.timer`. (HTTPS + checksum is
 transport/corruption integrity, not a GPG signature — signing is planned.)
 
-**Option B — from source:**
+**Option B — one-line install (fetches the latest release):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/asuramaya/phanspeed/main/install.sh | bash
+```
+
+**Option C — from a clone:**
 
 ```bash
 cd phanspeed
@@ -126,7 +133,21 @@ diag.py                            one-shot hardware probe (proves RPM is locked
 install.sh / uninstall.sh
 ```
 
-## Commands
+## Command line
+
+One `phanspeed <verb>` entrypoint drives everything from a terminal:
+
+```bash
+phanspeed status [--json]                      # profile, temp, power, EPP, battery
+phanspeed profile <quiet|balanced|cool|performance|auto>
+phanspeed power <WATTS|auto|full>              # CPU RAPL cap
+phanspeed epp <performance|…|power|auto>       # HWP energy preference
+phanspeed tune [--target both --apply]         # auto-tuner (needs sudo)
+phanspeed update [--check]                      # pull a newer release (.deb installs)
+phanspeed version
+```
+
+## Service commands
 
 ```bash
 systemctl status phanspeed           # daemon health
@@ -219,8 +240,8 @@ with your model and `diag.py` output.
 ## Project
 
 - [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) ·
-  [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md) ·
-  [eGO submission](SUBMISSION.md)
+  [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md) ·
+  [Changelog](CHANGELOG.md) · [Auto-tuner design](docs/AUTOTUNE.md)
 - Common tasks: `make help` (install, lint, test, pack, check)
 - Adversarial test suite: `make test` (`python3 tests/attack_socket.py`)
 - License: [GPL-3.0-or-later](LICENSE)

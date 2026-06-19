@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+"""phanspeed — one human entrypoint for the daemon (mirrors `kast <verb>`).
+
+Wraps the control socket and delegates to the helper binaries, so everything is
+reachable as `phanspeed <verb>` instead of a scatter of phanspeed-* commands.
+
+  phanspeed status [--json]
+  phanspeed profile <quiet|balanced|cool|performance|auto>
+  phanspeed power <WATTS|auto|full>
+  phanspeed epp <performance|balance_performance|balance_power|power|auto>
+  phanspeed tune [...]      (-> phanspeed-tune; needs root)
+  phanspeed update [--check](-> phanspeed-update)
+  phanspeed version
+  phanspeed help
+"""
+import json
+import os
+import socket
+import sys
+
+SOCK_PATH = "/run/phanspeed/control.sock"
+STATUS_PATH = "/run/phanspeed/status.json"
+VERSION_FILES = ("/usr/share/phanspeed/VERSION",
+                 os.path.join(os.path.dirname(os.path.dirname(
+                     os.path.abspath(__file__))), "VERSION"))
+PROFILES = ("quiet", "balanced", "cool", "performance")
+EPPS = ("performance", "balance_performance", "balance_power", "power")
+
+
+def _sock(obj):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(3)
+    try:
+        s.connect(SOCK_PATH)
+        s.sendall(json.dumps(obj).encode() + b"\n")
+        data = s.recv(1 << 16).split(b"\n", 1)[0]
+    finally:
+        s.close()
+    return json.loads(data)
+
+
+def _status():
+    try:
+        with open(STATUS_PATH) as f:
+            return json.load(f)
+    except OSError:
+        try:
+            return _sock({"cmd": "get"})
+        except OSError:
+            return None
+
+
+def _set(**kw):
+    kw["cmd"] = "set"
+    try:
+        r = _sock(kw)
+    except OSError as e:
+        sys.exit(f"cannot reach phanspeedd ({e}); is the service running?")
+    if not r.get("ok"):
+        sys.exit(f"rejected: {r.get('error') or r.get('rejected')}")
+    if r.get("rejected"):
+        print(f"note: rejected {r['rejected']}")
+    return r
+
+
+def cmd_status(args):
+    st = _status()
+    if st is None:
+        sys.exit("phanspeedd not running (no status).")
+    if "--json" in args:
+        print(json.dumps(st, indent=2))
+        return
+    p = st.get("power", {}) or {}
+    cp = st.get("cpu_pref", {}) or {}
+    temps = st.get("temps", {}) or {}
+    cpu = temps.get("coretemp:Package id 0") or temps.get("dell_ddv:CPU")
+    line = f"profile : {st.get('active_profile')}  (mode {st.get('mode')})"
+    if st.get("emergency"):
+        line += "  ⚠ EMERGENCY"
+    print(line)
+    if cpu is not None:
+        print(f"cpu temp: {cpu:.0f}°C")
+    if p.get("available"):
+        cap = p.get("limit_w")
+        print(f"cpu pwr : {p.get('current_w')} W  (cap {cap or 'full'}"
+              f"{', auto' if p.get('auto') else ''}; battery {p.get('battery_w') or 'base'})")
+    if cp.get("epp_available"):
+        print(f"epp     : {cp.get('epp')}  (AC cfg {cp.get('epp_cfg') or 'auto'}, "
+              f"battery {cp.get('battery_epp_cfg') or 'balance_power'})")
+    if cp.get("turbo_available"):
+        print(f"turbo   : {'on' if cp.get('turbo') else 'off'}")
+    print(f"battery : {'yes' if st.get('on_battery') else 'no (AC)'}")
+
+
+def cmd_profile(args):
+    if not args:
+        sys.exit("usage: phanspeed profile <quiet|balanced|cool|performance|auto>")
+    name = args[0]
+    if name == "auto":
+        _set(mode="auto")
+        print("mode -> auto")
+    elif name in PROFILES:
+        _set(mode="manual", manual_profile=name)
+        print(f"profile -> {name}")
+    else:
+        sys.exit(f"unknown profile '{name}' (pick {', '.join(PROFILES)}, or auto)")
+
+
+def cmd_power(args):
+    if not args:
+        sys.exit("usage: phanspeed power <WATTS|auto|full>")
+    v = args[0]
+    if v == "auto":
+        _set(power_auto=True)
+        print("cpu power -> auto (scale with temperature)")
+    elif v in ("full", "0", "off"):
+        _set(power_auto=False, power_limit_w=0)
+        print("cpu power -> full (unmanaged)")
+    else:
+        try:
+            w = int(v)
+        except ValueError:
+            sys.exit("power takes a wattage, 'auto', or 'full'")
+        _set(power_auto=False, power_limit_w=w)
+        print(f"cpu power cap -> {w} W")
+
+
+def cmd_epp(args):
+    if not args:
+        sys.exit(f"usage: phanspeed epp <{'|'.join(EPPS)}|auto>")
+    v = args[0]
+    if v == "auto":
+        _set(epp="")
+        print("epp -> auto (leave alone)")
+    elif v in EPPS:
+        _set(epp=v)
+        print(f"epp -> {v}")
+    else:
+        sys.exit(f"unknown epp '{v}'")
+
+
+def cmd_delegate(binary, args):
+    path = f"/usr/local/bin/{binary}"
+    if not os.path.exists(path):
+        path = binary  # fall back to PATH
+    try:
+        os.execvp(path, [binary, *args])
+    except OSError as e:
+        sys.exit(f"cannot run {binary}: {e}")
+
+
+def cmd_version(_args):
+    for vf in VERSION_FILES:
+        try:
+            with open(vf) as f:
+                print(f"phanspeed {f.read().strip()}")
+                return
+        except OSError:
+            continue
+    print("phanspeed (version unknown)")
+
+
+USAGE = __doc__.split("\n\n", 2)[2].rstrip()
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        print(USAGE)
+        return 0
+    verb, rest = argv[0], argv[1:]
+    handlers = {
+        "status": cmd_status, "profile": cmd_profile, "power": cmd_power,
+        "epp": cmd_epp, "version": cmd_version,
+        "tune": lambda a: cmd_delegate("phanspeed-tune", a),
+        "update": lambda a: cmd_delegate("phanspeed-update", a),
+    }
+    h = handlers.get(verb)
+    if not h:
+        sys.exit(f"unknown command '{verb}'. Try: phanspeed help")
+    h(rest)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

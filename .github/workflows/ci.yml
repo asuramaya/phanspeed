@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Python compiles
-        run: python3 -m py_compile bin/phanspeedd bin/phanspeed-tune bin/phanspeed-update diag.py
+        run: python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update diag.py
 
       - name: Config validation (fuzz, hardware-free)
         run: python3 tests/test_validation.py

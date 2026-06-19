@@ -22,7 +22,7 @@ install -d "$ROOT/DEBIAN" \
           "$ROOT/etc/phanspeed"
 
 # binaries -> /usr/bin
-for b in phanspeedd phanspeed-healthcheck phanspeed-tune phanspeed-update; do
+for b in phanspeedd phanspeed phanspeed-healthcheck phanspeed-tune phanspeed-update; do
     install -m 0755 "$SRC/bin/$b" "$ROOT/usr/bin/$b"
 done
 

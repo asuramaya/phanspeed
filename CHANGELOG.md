@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] — 2026-06-19
+
+### Added
+- **Unified `phanspeed` CLI** — one verb entrypoint mirroring the sibling `kast`
+  project's UX: `phanspeed status [--json]`, `profile`, `power`, `epp`, `tune`
+  (→ phanspeed-tune), `update` (→ phanspeed-update), `version`. Wraps the control
+  socket; the `phanspeed-*` helpers stay for systemd but humans get one command.
+- **One-line install** — `curl -fsSL …/install.sh | bash`; the installer
+  bootstraps by fetching the latest release when run outside a checkout.
+- **`CODE_OF_CONDUCT.md`**, a release badge, and a `phanspeed version` source of
+  truth (`/usr/share/phanspeed/VERSION`, from the repo `VERSION` file) — aligning
+  conventions with the kast project.
+
+### Note
+Cross-project alignment with [kast](https://github.com/asuramaya/kast): both now
+share the `<tool> <verb>` CLI shape, a one-line installer, the same doc set/badge
+order, and a `VERSION` single-source-of-truth. The MIT (kast) vs GPL-3.0
+(phanspeed) **license difference is intentional and unchanged.**
+
 ## [0.12.0] — 2026-06-19
 
 ### Added

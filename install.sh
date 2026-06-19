@@ -4,7 +4,21 @@
 # PhanSpeed installer — Dell thermal/fan control daemon + Quick Settings pill.
 set -euo pipefail
 
-SRC="$(cd "$(dirname "$0")" && pwd)"
+REPO="asuramaya/phanspeed"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)"
+
+# Bootstrap for the one-line install (`curl -fsSL .../install.sh | bash`): if we
+# aren't sitting next to the source tree, fetch the latest release and re-exec.
+if [[ ! -f "$SRC/bin/phanspeedd" ]]; then
+  echo "== fetching latest PhanSpeed release =="
+  TMP="$(mktemp -d)"
+  url="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+        | grep -m1 tarball_url | cut -d'"' -f4)"
+  [[ -n "$url" ]] || { echo "could not find a release to download"; exit 1; }
+  curl -fsSL "$url" | tar -xz -C "$TMP" --strip-components=1
+  exec bash "$TMP/install.sh" "$@"
+fi
+
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
@@ -33,8 +47,12 @@ rm -f /usr/local/bin/dellfand /usr/local/bin/dellfanctl \
 # 1. daemon + healthcheck binaries (root-owned, not group/world writable)
 echo "-- installing daemon -> /usr/local/bin/phanspeedd"
 install -m 0755 -o root -g root "$SRC/bin/phanspeedd" /usr/local/bin/phanspeedd
+install -m 0755 -o root -g root "$SRC/bin/phanspeed" /usr/local/bin/phanspeed
 install -m 0755 -o root -g root "$SRC/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
 install -m 0755 -o root -g root "$SRC/bin/phanspeed-tune" /usr/local/bin/phanspeed-tune
+# version marker so `phanspeed version` works on source installs too
+install -d -m 0755 /usr/share/phanspeed
+install -m 0644 "$SRC/VERSION" /usr/share/phanspeed/VERSION
 
 # 2. default config (auto mode); allow_uids locks control to the installing user
 echo "-- writing default config -> /etc/phanspeed/config.json (allow_uids=[$USER_UID])"

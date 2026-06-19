@@ -31,7 +31,7 @@ verify-unit:
 		| grep -v 'not executable' | { ! grep . ; } && echo "unit OK"
 
 check: lint verify-unit
-	python3 -m py_compile bin/phanspeedd bin/phanspeed-tune bin/phanspeed-update diag.py
+	python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update diag.py
 	python3 tests/test_validation.py
 	node --check $(EXT)/extension.js
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
