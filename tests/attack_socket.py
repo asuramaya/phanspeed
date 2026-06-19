@@ -85,6 +85,10 @@ HOSTILE = [
     {"cmd": "set", "power_limit_w": -50},       # negative -> clamp
     {"cmd": "set", "power_limit_w": "max"},     # wrong type -> unmanaged
     {"cmd": "set", "power_limit_w": [45]},      # list -> rejected
+    {"cmd": "set", "turbo": "maybe"},           # bad enum -> rejected
+    {"cmd": "set", "turbo": 1},                 # wrong type -> rejected
+    {"cmd": "set", "epp": "turbocharged"},      # not a real EPP -> rejected
+    {"cmd": "set", "epp": ["performance"]},     # list -> rejected
     {"cmd": "wat"}, {"cmd": 123}, {}, {"cmd": "get"},
 ]
 for msg in HOSTILE:
@@ -99,8 +103,9 @@ random.seed(1)
 KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
         "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
         "rate_limit", "power_limit_w", "power_floor_w", "power_auto",
-        "battery_aware", "battery_profile", "gpu_power_limit_w"]
-VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto", "cool"]
+        "battery_aware", "battery_profile", "gpu_power_limit_w", "turbo", "epp"]
+VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto",
+        "cool", "on", "off", "performance", "balance_power", ""]
 for _ in range(3000):
     msg = {"cmd": random.choice(["set", "get", "x"])}
     for k in random.sample(KEYS, random.randint(0, 4)):

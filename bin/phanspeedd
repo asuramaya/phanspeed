@@ -50,6 +50,18 @@ RAPL_GLOB = "/sys/class/powercap/intel-rapl:*"   # package domains live here
 PL_MIN_W = 8                                       # never cap below this (usability)
 PL_MAX_W = 250                                      # absolute sanity ceiling
 
+# Turbo (Intel/AMD boost) and HWP energy/performance preference — extra,
+# always-optional CPU levers. Both are plain sysfs writes (no capability needed).
+TURBO_PATH = "/sys/devices/system/cpu/intel_pstate/no_turbo"   # 1 = turbo OFF
+CPU_GLOB = "/sys/devices/system/cpu/cpu[0-9]*"
+EPP_LEAF = "cpufreq/energy_performance_preference"
+EPP_AVAIL_LEAF = "cpufreq/energy_performance_available_preferences"
+# kernel-standard EPP strings; validated without touching hardware (so the
+# config fuzz test needs no live CPU). set_epp() additionally checks what the
+# running kernel actually offers.
+VALID_EPP = {"default", "performance", "balance_performance",
+             "balance_power", "power"}
+
 # preferred profile name per cooling level (first match in choices wins)
 LEVEL_NAMES = {
     0: ["quiet", "low-power", "power-saver", "balanced"],          # calmest fans
@@ -75,6 +87,8 @@ DEFAULTS = {
     "power_floor_w": 0,             # cap when hot under power_auto; 0 = base TDP
     "battery_aware": False,         # force a calm profile + low power on battery
     "battery_profile": "quiet",     # profile to use while on battery
+    "turbo": "auto",                # auto = leave alone | on | off (force boost)
+    "epp": "",                      # "" = leave alone | else an EPP preference
     "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
     "gpu_persistence": False,       # nvidia-smi -pm 1 (keeps driver loaded; desktops)
 }
@@ -141,6 +155,11 @@ def sanitize_config(cfg, choices, sensors):
     if cfg.get("battery_profile") not in choices:
         cfg["battery_profile"] = ("quiet" if "quiet" in choices
                                   else (choices[0] if choices else "quiet"))
+    if cfg.get("turbo") not in ("auto", "on", "off"):
+        cfg["turbo"] = "auto"
+    ep = cfg.get("epp")
+    if not (isinstance(ep, str) and (ep == "" or ep in VALID_EPP)):
+        cfg["epp"] = ""
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -214,6 +233,7 @@ class Hardware:
             self.level_profile[lvl] = next(
                 (n for n in names if n in self.choices), self.choices[0])
         self._discover_rapl()
+        self._discover_cpu_pref()
         self.gpu = Gpu()
 
     # ---- RAPL CPU power limit (PL1) ---- #
@@ -256,6 +276,66 @@ class Hardware:
     def restore_power(self):
         if self.has_power and self.power_default_uw:
             _write(self.rapl_pl1, self.power_default_uw)
+
+    # ---- turbo / boost + HWP energy-perf preference (EPP) ---- #
+    def _discover_cpu_pref(self):
+        self.turbo_path = (TURBO_PATH if os.path.exists(TURBO_PATH)
+                           and os.access(TURBO_PATH, os.W_OK) else None)
+        # Some firmware (e.g. Dell with Turbo Boost disabled in BIOS) exposes a
+        # writable no_turbo node but rejects the write with EPERM/EIO. Latch that
+        # so we stop retrying + log-spamming every poll.
+        self.turbo_locked = False
+        # per-cpu EPP nodes + the kernel's offered preference list
+        self.epp_paths = []
+        self.epp_choices = []
+        for d in sorted(glob.glob(CPU_GLOB)):
+            p = os.path.join(d, EPP_LEAF)
+            if os.path.exists(p) and os.access(p, os.W_OK):
+                self.epp_paths.append(p)
+        if self.epp_paths:
+            avail = _read(os.path.join(os.path.dirname(os.path.dirname(
+                self.epp_paths[0])), EPP_AVAIL_LEAF))
+            self.epp_choices = [c for c in (avail or "").split() if c in VALID_EPP]
+
+    @property
+    def has_turbo(self):
+        return self.turbo_path is not None and not self.turbo_locked
+
+    @property
+    def has_epp(self):
+        return bool(self.epp_paths)
+
+    def get_turbo(self):
+        """True = turbo enabled (no_turbo == 0); None if no/locked knob."""
+        if self.turbo_path is None:
+            return None
+        v = _read_int(self.turbo_path)
+        return (v == 0) if v is not None else None
+
+    def set_turbo(self, on):
+        if not self.has_turbo:
+            return False
+        want = "0" if on else "1"
+        if _read(self.turbo_path) == want:
+            return True
+        if _write(self.turbo_path, want):
+            return True
+        # write rejected (turbo disabled/locked in firmware) — latch and stop
+        self.turbo_locked = True
+        log("turbo control unavailable (disabled in BIOS?) — not retrying")
+        return False
+
+    def get_epp(self):
+        return _read(self.epp_paths[0]) if self.has_epp else None
+
+    def set_epp(self, pref):
+        if not self.has_epp or pref not in self.epp_choices:
+            return False
+        ok = True
+        for p in self.epp_paths:
+            if _read(p) != pref:
+                ok = _write(p, pref) and ok
+        return ok
 
     def _discover_fans(self):
         fans = {}
@@ -429,6 +509,8 @@ class Daemon:
         self._gpu_last_set = None       # last GPU power limit we wrote (W)
         self._gpu_dirty = False         # have we changed the GPU power limit?
         self._gpu_pm = False            # have we enabled GPU persistence mode?
+        self._turbo_dirty = False       # have we changed the turbo state?
+        self._epp_dirty = False         # have we changed the EPP preference?
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -526,9 +608,46 @@ class Daemon:
                         self.level, self.config["hysteresis"])
                     self.hw.set_profile(self.hw.level_profile[self.level])
                 self._apply_power(emergency=False)
+            self._apply_cpu_pref(self.emergency, battery)
             self._apply_gpu(self.emergency, battery)
             self.applied_profile = self.hw.get_profile()
         self.write_status()      # always publish (incl. during emergency)
+
+    def _apply_cpu_pref(self, emergency, battery):
+        """Drive turbo/boost and the HWP energy-perf preference. Both default to
+        unmanaged ('auto'/''); emergency and battery force the cooler/lower-power
+        direction. When we've touched a knob but it's unmanaged again, restore the
+        firmware-neutral value (turbo on, EPP 'default') so an emergency doesn't
+        silently leave boost disabled forever."""
+        if self.hw.has_turbo:
+            desired = None
+            if emergency or battery:
+                desired = False                       # boost off cuts heat/draw
+            elif self.config["turbo"] == "on":
+                desired = True
+            elif self.config["turbo"] == "off":
+                desired = False
+            if desired is not None:
+                self.hw.set_turbo(desired)
+                self._turbo_dirty = True
+            elif self._turbo_dirty:
+                self.hw.set_turbo(True)               # neutral default = on
+                self._turbo_dirty = False
+        if self.hw.has_epp:
+            pref = None
+            if emergency:
+                pref = "power"
+            elif battery:
+                pref = "balance_power"
+            elif self.config["epp"]:
+                pref = self.config["epp"]
+            if pref and pref in self.hw.epp_choices:
+                self.hw.set_epp(pref)
+                self._epp_dirty = True
+            elif self._epp_dirty:
+                if "default" in self.hw.epp_choices:
+                    self.hw.set_epp("default")
+                self._epp_dirty = False
 
     def _apply_gpu(self, emergency, battery):
         """Cap the discrete GPU's power. Emergency/battery -> minimum; otherwise
@@ -656,6 +775,15 @@ class Daemon:
                                   if self.hw.power_default_uw else None),
                 },
                 "gpu": self._gpu_status(),
+                "cpu_pref": {
+                    "turbo_available": self.hw.has_turbo,
+                    "turbo": self.hw.get_turbo(),
+                    "turbo_cfg": self.config.get("turbo", "auto"),
+                    "epp_available": self.hw.has_epp,
+                    "epp": self.hw.get_epp(),
+                    "epp_cfg": self.config.get("epp", ""),
+                    "epp_choices": self.hw.epp_choices,
+                },
                 "config": self.config,
             }
 
@@ -726,6 +854,17 @@ class Daemon:
                     changes["battery_profile"] = msg["battery_profile"]
                 else:
                     rejected.append("battery_profile")
+            if "turbo" in msg:
+                if msg["turbo"] in ("auto", "on", "off"):
+                    changes["turbo"] = msg["turbo"]
+                else:
+                    rejected.append("turbo")
+            if "epp" in msg:
+                ev = msg["epp"]
+                if isinstance(ev, str) and (ev == "" or ev in VALID_EPP):
+                    changes["epp"] = ev
+                else:
+                    rejected.append("epp")
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)
@@ -821,6 +960,10 @@ class Daemon:
         try:
             self.hw.set_profile(name)
             self.hw.restore_power()
+            if self._turbo_dirty:
+                self.hw.set_turbo(True)        # leave boost enabled (neutral)
+            if self._epp_dirty and "default" in self.hw.epp_choices:
+                self.hw.set_epp("default")
             self.hw.gpu.restore()
         except Exception as e:
             log(f"restore error: {e}")
@@ -860,6 +1003,9 @@ def selftest():
     print(f"sensors      : {len(hw.sensors)} temp, {len(hw.fans)} fan")
     print(f"watchdog     : {hw.crit_sensor_ids}  -> {hw.max_crit_temp()}°C")
     print(f"cpu power    : {'yes ' + str(hw.get_power_w()) + 'W' if hw.has_power else 'n/a'}")
+    turbo = ("on" if hw.get_turbo() else "off") if hw.has_turbo else "n/a"
+    print(f"turbo        : {turbo}")
+    print(f"epp          : {hw.get_epp() or 'n/a'}  (choices: {' '.join(hw.epp_choices) or 'none'})")
     print(f"gpu          : {hw.gpu.name if hw.gpu.available else 'n/a'}")
     if hw.max_crit_temp() is None:
         ok = False

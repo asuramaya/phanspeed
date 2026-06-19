@@ -57,6 +57,8 @@ if [[ ! -f /etc/phanspeed/config.json ]]; then
   "power_floor_w": 0,
   "battery_aware": false,
   "battery_profile": "quiet",
+  "turbo": "auto",
+  "epp": "",
   "gpu_power_limit_w": 0,
   "gpu_persistence": false
 }

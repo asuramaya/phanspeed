@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-06-19
+
+### Added
+- **CPU turbo/boost control** — new `turbo` config (`auto`/`on`/`off`) and a
+  **Turbo boost** switch in the pill, driving `intel_pstate/no_turbo`. Emergency
+  and battery modes force boost off to cut heat/draw; the neutral state (on) is
+  restored when management is released.
+- **HWP energy-performance preference (EPP)** — new `epp` config and an **Energy
+  preference** submenu (Performance → Power saving), writing each CPU's
+  `energy_performance_preference`. Emergency forces `power`, battery forces
+  `balance_power`. Both levers are plain sysfs writes — no new capability, the
+  daemon's single `CAP_CHOWN` posture is unchanged.
+- Status snapshot gains a `cpu_pref` block; `--selftest` reports turbo + EPP;
+  installer seeds `turbo`/`epp` in the default config; config-fuzz test covers the
+  new fields.
+
 ## [0.7.1] — 2026-06-16
 
 ### Fixed

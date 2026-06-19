@@ -48,6 +48,8 @@ def check(cfg, where):
             assert v == 0 or 8 <= v <= 250, f"{k} out of range"
         for k in ("power_auto", "battery_aware", "gpu_persistence"):
             assert isinstance(cfg[k], bool), f"{k} type"
+        assert cfg["turbo"] in ("auto", "on", "off"), "bad turbo"
+        assert cfg["epp"] == "" or cfg["epp"] in m.VALID_EPP, "bad epp"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
     except AssertionError as e:
         fails.append(f"[{where}] {e}")
@@ -72,6 +74,8 @@ HOSTILE = [
     {"power_limit_w": -5, "power_floor_w": 9e9, "gpu_power_limit_w": "max"},
     {"allow_uids": "everyone", "rate_limit": float("nan")},
     {"power_auto": "yes", "battery_aware": 1, "gpu_persistence": []},
+    {"turbo": "maybe", "epp": "turbocharged"},
+    {"turbo": 1, "epp": ["performance"]},
 ]
 for h in HOSTILE:
     cfg = m.sanitize_config(dict(m.DEFAULTS, **h), CHOICES, SENSORS)
@@ -81,7 +85,8 @@ for h in HOSTILE:
 random.seed(7)
 KEYS = list(m.DEFAULTS)
 VALS = [None, True, False, -1e9, 1e9, "x", "auto", "cool", [], {}, 0, 8, 95,
-        9999, float("nan"), float("inf"), -50, 3.5]
+        9999, float("nan"), float("inf"), -50, 3.5, "on", "off", "performance",
+        "balance_power", ""]
 for _ in range(8000):
     bad = {}
     for k in random.sample(KEYS, random.randint(1, 6)):
@@ -92,9 +97,11 @@ for _ in range(8000):
 # --- legit values preserved ------------------------------------------------
 cfg = m.sanitize_config(dict(m.DEFAULTS, mode="manual", manual_profile="cool",
                              power_limit_w=35, gpu_power_limit_w=40,
-                             battery_aware=True), CHOICES, SENSORS)
+                             battery_aware=True, turbo="off",
+                             epp="balance_power"), CHOICES, SENSORS)
 assert cfg["manual_profile"] == "cool" and cfg["power_limit_w"] == 35
 assert cfg["gpu_power_limit_w"] == 40 and cfg["battery_aware"] is True
+assert cfg["turbo"] == "off" and cfg["epp"] == "balance_power"
 print("legit values preserved OK")
 
 if fails:

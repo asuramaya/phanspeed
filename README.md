@@ -139,6 +139,8 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `power_floor_w` | the cap when hot under `power_auto`; `0` = base TDP |
 | `battery_aware` | on battery, force `battery_profile` + cap CPU to base TDP |
 | `battery_profile` | profile to use while on battery (default `quiet`) |
+| `turbo` | `auto` (leave alone) · `on` · `off` — force CPU turbo/boost; emergency/battery force it off |
+| `epp` | HWP energy/perf preference (`performance`…`power`); `""` = leave alone |
 | `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
 | `gpu_persistence` | enable `nvidia-smi -pm 1` (mainly for desktops; off by default) |
 

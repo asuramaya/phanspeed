@@ -26,6 +26,13 @@ const PROFILE_ICON = {
 const PROFILE_LABEL = {
     quiet: 'Quiet', balanced: 'Balanced', cool: 'Cool', performance: 'Performance',
 };
+const EPP_LABEL = {
+    performance: 'Performance',
+    balance_performance: 'Balanced (perf)',
+    default: 'Default',
+    balance_power: 'Balanced (power)',
+    power: 'Power saving',
+};
 const DEFAULT_ICON = 'power-profile-balanced-symbolic';
 
 function isObj(v) {
@@ -90,6 +97,15 @@ class PhanToggle extends QuickMenuToggle {
         this._profileItems = {};
         this._profileSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._profileSection);
+
+        // CPU turbo + energy-preference live in their own section so they keep
+        // their place regardless of which power/GPU submenus get inserted.
+        this._cpuPrefSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._cpuPrefSection);
+        this._cpuPrefBuilt = false;
+        this._turboItem = null;
+        this._eppSub = null;
+        this._eppItems = {};
 
         // power-limit submenus (added only when the hardware is available)
         this._powerSub = null;
@@ -205,6 +221,42 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._gpuSub, 2);
     }
 
+    _buildCpuPref(pref) {
+        this._cpuPrefSection.removeAll();
+        this._eppItems = {};
+        this._turboItem = null;
+        this._eppSub = null;
+
+        if (pref.turbo_available) {
+            this._turboItem = new PopupMenu.PopupSwitchMenuItem('Turbo boost', false);
+            this._turboItem.connect('toggled', (_i, state) => {
+                sendCmd({cmd: 'set', turbo: state ? 'on' : 'off'});
+                this._scheduleRefresh();
+            });
+            this._cpuPrefSection.addMenuItem(this._turboItem);
+        }
+
+        if (pref.epp_available && Array.isArray(pref.epp_choices) &&
+            pref.epp_choices.length) {
+            this._eppSub = new PopupMenu.PopupSubMenuMenuItem('Energy preference', true);
+            this._eppSub.icon.icon_name = 'power-profile-balanced-symbolic';
+            const add = (label, val) => {
+                const it = new PopupMenu.PopupMenuItem(label);
+                it.connect('activate', () => {
+                    sendCmd({cmd: 'set', epp: val});
+                    this._scheduleRefresh();
+                });
+                this._eppSub.menu.addMenuItem(it);
+                this._eppItems[val] = it;
+            };
+            add('Auto (leave alone)', '');
+            for (const c of pref.epp_choices)
+                add(EPP_LABEL[c] || c, c);
+            this._cpuPrefSection.addMenuItem(this._eppSub);
+        }
+        this._cpuPrefBuilt = true;
+    }
+
     _scheduleRefresh() {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
             this.refresh();
@@ -231,6 +283,10 @@ class PhanToggle extends QuickMenuToggle {
         const gpuInfo = isObj(st.gpu) ? st.gpu : {};
         if (!this._gpuSub && gpuInfo.available)
             this._buildGpu(gpuInfo);
+
+        const pref = isObj(st.cpu_pref) ? st.cpu_pref : {};
+        if (!this._cpuPrefBuilt && (pref.turbo_available || pref.epp_available))
+            this._buildCpuPref(pref);
 
         const cfg = isObj(st.config) ? st.config : {};
         const profile = typeof st.active_profile === 'string' ? st.active_profile : '';
@@ -294,6 +350,21 @@ class PhanToggle extends QuickMenuToggle {
             for (const [w, item] of Object.entries(this._gpuItems)) {
                 const active = Number(w) === cap;
                 item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+            }
+        }
+
+        // turbo switch reflects the actual boost state; EPP submenu marks the cap
+        if (this._turboItem)
+            this._turboItem.setToggleState(pref.turbo === true);
+        if (this._eppSub) {
+            const eppCfg = typeof pref.epp_cfg === 'string' ? pref.epp_cfg : '';
+            const eppCur = typeof pref.epp === 'string' ? pref.epp : null;
+            this._eppSub.label.text = eppCfg
+                ? `Energy: ${EPP_LABEL[eppCfg] || eppCfg}`
+                : `Energy: auto${eppCur ? ` · ${EPP_LABEL[eppCur] || eppCur}` : ''}`;
+            for (const [val, item] of Object.entries(this._eppItems)) {
+                item.setOrnament(val === eppCfg
+                    ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
             }
         }
 
