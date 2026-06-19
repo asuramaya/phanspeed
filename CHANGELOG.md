@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] — 2026-06-19
+
+### Added
+- **Pill shows the adaptive scenes.** A new readout in the Quick Settings menu
+  displays both operating points — `🔌 45W·perf   🔋 35W·bal-pwr` — with the active
+  plug-state marked (`▶`). Surfaces the battery scene (`battery_power_w` /
+  `battery_epp`), which the pill previously hid, so the tuner's output is visible
+  at a glance. metadata version 8→9.
+
 ## [0.10.1] — 2026-06-19
 
 ### Changed

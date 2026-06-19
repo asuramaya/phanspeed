@@ -33,6 +33,10 @@ const EPP_LABEL = {
     balance_power: 'Balanced (power)',
     power: 'Power saving',
 };
+const EPP_SHORT = {
+    performance: 'perf', balance_performance: 'bal-perf', default: 'def',
+    balance_power: 'bal-pwr', power: 'pwr',
+};
 const DEFAULT_ICON = 'power-profile-balanced-symbolic';
 
 function isObj(v) {
@@ -124,6 +128,9 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._batteryItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        // adaptive scenes (AC vs battery power+EPP), active one marked
+        this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
+        this.menu.addMenuItem(this._sceneItem);
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._tempItem);
 
@@ -366,6 +373,27 @@ class PhanToggle extends QuickMenuToggle {
                 item.setOrnament(val === eppCfg
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
             }
+        }
+
+        // adaptive scene readout: AC vs battery (power cap + EPP), active marked
+        if (power.available) {
+            const eppAvail = pref.epp_available === true;
+            const acCapN = num(power.limit_w) || 0;
+            const bCapN = num(power.battery_w) || 0;
+            const acEpp = eppAvail
+                ? (typeof pref.epp_cfg === 'string' && pref.epp_cfg
+                    ? EPP_SHORT[pref.epp_cfg] || pref.epp_cfg : 'auto')
+                : null;
+            const bEpp = eppAvail
+                ? EPP_SHORT[(typeof pref.battery_epp_cfg === 'string' &&
+                    pref.battery_epp_cfg) || 'balance_power'] || 'bal-pwr'
+                : null;
+            const ac = `🔌 ${acCapN > 0 ? `${acCapN}W` : 'full'}${acEpp ? `·${acEpp}` : ''}`;
+            const bt = `🔋 ${bCapN > 0 ? `${bCapN}W` : 'base'}${bEpp ? `·${bEpp}` : ''}`;
+            this._sceneItem.label.text =
+                `${onBattery ? '  ' : '▶ '}${ac}    ${onBattery ? '▶ ' : '  '}${bt}`;
+        } else {
+            this._sceneItem.label.text = '—';
         }
 
         const line = [];
