@@ -12,7 +12,7 @@ them automatically on plug/unplug:
 
 | State | Objective | Converges at |
 |-------|-----------|--------------|
-| **AC** | max sustained performance | highest power that stays under the thermal ceiling at steady state |
+| **AC** | max sustained performance | the **performance knee** — lowest cap that still reaches the best clock under the thermal ceiling (extra watts past it buy no clock) |
 | **Battery** | best perf-per-watt | the *knee* of the curve — max MHz delivered per watt |
 
 ## The loop (state machine)
@@ -33,8 +33,10 @@ IDLE ──start──▶ CALIBRATING ──converged──▶ PROBATION ──s
    steady state (`--dwell`, default 60 s).
 3. **Measure.** Per step: steady-state package temp, package watts, and achieved
    clock (the average of the last N samples, after the transient settles).
-4. **Judge.** AC: keep the highest cap with steady temp ≤ ceiling. Battery:
-   maximize MHz/W. Undervolt adds a **stability gate** (below).
+4. **Judge.** AC: the **performance knee** — the lowest cap that still reaches
+   (within 1% of) the best clock seen under the ceiling, so it's max performance at
+   minimum heat/headroom rather than blindly the highest cap. Battery: maximize
+   MHz/W. Undervolt adds a **stability gate** (below).
 
 ## Coordination with the daemon
 

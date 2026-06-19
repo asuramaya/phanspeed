@@ -7,8 +7,8 @@ Sweeps the CPU package power cap (RAPL PL1/PL2) under a controlled all-core load
 measures steady-state temperature, package power and achieved clock at each step,
 and derives two operating points:
 
-  * AC      : the highest cap whose steady temp stays under the thermal ceiling
-              (max sustained performance).
+  * AC      : the performance knee — the lowest cap that still reaches the best
+              clock seen under the thermal ceiling (max performance, least heat).
   * battery : the cap with the best MHz-per-watt (the efficiency knee).
 
 It writes both into phanspeed's config over the control socket
@@ -199,9 +199,22 @@ def sweep(rapl, ceiling, lo, hi, step, dwell, emergency):
     return rows
 
 
+CLOCK_TOL = 0.01   # treat clocks within 1% of peak as "the same" performance
+
+
 def pick(rows, ceiling):
-    under = [r for r in rows if r["temp"] and r["temp"] <= ceiling]
-    ac = max(under, key=lambda r: r["cap"]) if under else (rows[0] if rows else None)
+    """AC = the performance *knee*: the lowest cap that still reaches (within
+    CLOCK_TOL of) the best clock seen under the thermal ceiling — same speed,
+    least power/heat/headroom. This is where extra watts stop buying clock; with
+    turbo enabled it's the genuine diminishing-returns point. battery = best
+    MHz/W."""
+    under = [r for r in rows if r["temp"] and r["temp"] <= ceiling and r["mhz"]]
+    if under:
+        peak = max(r["mhz"] for r in under)
+        plateau = [r for r in under if r["mhz"] >= peak * (1 - CLOCK_TOL)]
+        ac = min(plateau, key=lambda r: r["cap"])
+    else:
+        ac = rows[0] if rows else None
     eff = [r for r in rows if r["eff"] > 0]
     batt = max(eff, key=lambda r: r["eff"]) if eff else ac
     return ac, batt
@@ -255,7 +268,7 @@ def main():
         if not rows:
             sys.exit("no measurements taken.")
         ac, batt = pick(rows, ceiling)
-        print(f"\nresult:\n  AC (max perf ≤{ceiling}°C): {ac['cap']} W "
+        print(f"\nresult:\n  AC (perf knee ≤{ceiling}°C): {ac['cap']} W "
               f"@ {ac['temp']:.0f}°C, {ac['mhz']:.0f} MHz")
         print(f"  battery (best MHz/W) : {batt['cap']} W "
               f"@ {batt['eff']:.0f} MHz/W")

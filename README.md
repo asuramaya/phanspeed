@@ -154,9 +154,9 @@ Under `power_auto` the CPU cap ramps **smoothly** from the firmware default at
 Instead of guessing power caps, let the machine find them. `phanspeed-tune` runs a
 closed-loop sweep: it drives the RAPL cap under a controlled all-core load,
 measures steady-state temperature, package power and clock at each step, and
-derives two operating points — the **highest cap that stays under a thermal
-ceiling** (AC, max sustained performance) and the **best MHz-per-watt knee**
-(battery). With `--apply` it writes a complete **scene** for each state — power cap
+derives two operating points — the **performance knee** (AC: the lowest cap that
+still reaches the best clock under a thermal ceiling — same speed, least heat) and
+the **best MHz-per-watt knee** (battery). With `--apply` it writes a complete **scene** for each state — power cap
 *plus* a matching EPP (`performance` on AC, `balance_power` on battery) — into the
 config (`power_limit_w`/`epp` and `battery_power_w`/`battery_epp`), so the daemon
 applies the right whole bundle per plug-state. On a voltage-locked machine (no

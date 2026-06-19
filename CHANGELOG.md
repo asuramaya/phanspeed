@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.1] — 2026-06-19
+
+### Changed
+- **`phanspeed-tune` AC pick is now the performance *knee*** — the lowest cap that
+  still reaches (within 1% of) the best clock under the thermal ceiling, instead of
+  blindly the highest under-ceiling cap. Same top performance, less heat and
+  headroom. On a turbo-locked chip this collapses AC to the point where the clock
+  plateaus (~base TDP); with Turbo Boost enabled it finds the genuine
+  diminishing-returns point where extra watts stop buying clock.
+
 ## [0.10.0] — 2026-06-19
 
 ### Added
