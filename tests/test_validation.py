@@ -42,7 +42,8 @@ def check(cfg, where):
             v = cfg[k]
             assert isinstance(v, (int, float)) and not isinstance(v, bool), f"{k} type"
             assert not (isinstance(v, float) and math.isnan(v)), f"{k} nan"
-        for k in ("power_limit_w", "power_floor_w", "gpu_power_limit_w"):
+        for k in ("power_limit_w", "power_floor_w", "battery_power_w",
+                  "gpu_power_limit_w"):
             v = cfg[k]
             assert isinstance(v, int) and not isinstance(v, bool), f"{k} type"
             assert v == 0 or 8 <= v <= 250, f"{k} out of range"

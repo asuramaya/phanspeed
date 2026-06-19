@@ -139,6 +139,7 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `power_floor_w` | the cap when hot under `power_auto`; `0` = base TDP |
 | `battery_aware` | on battery, force `battery_profile` + cap CPU to base TDP |
 | `battery_profile` | profile to use while on battery (default `quiet`) |
+| `battery_power_w` | tuned CPU cap to use on battery (set by `phanspeed-tune`); `0` = base TDP |
 | `turbo` | `auto` (leave alone) · `on` · `off` — force CPU turbo/boost; emergency/battery force it off |
 | `epp` | HWP energy/perf preference (`performance`…`power`); `""` = leave alone |
 | `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
@@ -146,6 +147,28 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 
 Under `power_auto` the CPU cap ramps **smoothly** from the firmware default at
 `quiet_below` down to the floor at `cool_above`.
+
+### Auto-tuning (`phanspeed-tune`)
+
+Instead of guessing power caps, let the machine find them. `phanspeed-tune` runs a
+closed-loop sweep: it drives the RAPL cap under a controlled all-core load,
+measures steady-state temperature, package power and clock at each step, and
+derives two operating points — the **highest cap that stays under a thermal
+ceiling** (AC, max sustained performance) and the **best MHz-per-watt knee**
+(battery). With `--apply` it writes both into the config (`power_limit_w` +
+`battery_power_w`) so the daemon picks the right one per plug-state.
+
+```bash
+sudo phanspeed-tune --dry-run                 # show the plan, no stress
+sudo phanspeed-tune --target both --apply     # full sweep, write results
+sudo phanspeed-tune --ceiling 80 --step 5     # gentler ceiling, finer steps
+```
+
+The phanspeed daemon keeps running during a sweep (its emergency failsafe stays
+armed); the tuner just tells it to stop managing CPU power for the duration. RAPL
+can only make the chip slower — never wrong — so this is safe and needs no
+stability gate. Full design, including the (gated) undervolt auto-tuner and its
+self-checking + boot-watchdog safety model: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 
 The 5770 runs hot. `platform_profile` only changes *fan* behaviour — to actually
 cut the heat, cap CPU power: set `power_limit_w` (e.g. the chip's base TDP) or use

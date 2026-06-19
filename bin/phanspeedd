@@ -87,6 +87,7 @@ DEFAULTS = {
     "power_floor_w": 0,             # cap when hot under power_auto; 0 = base TDP
     "battery_aware": False,         # force a calm profile + low power on battery
     "battery_profile": "quiet",     # profile to use while on battery
+    "battery_power_w": 0,           # tuned CPU cap on battery; 0 = base TDP
     "turbo": "auto",                # auto = leave alone | on | off (force boost)
     "epp": "",                      # "" = leave alone | else an EPP preference
     "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
@@ -145,6 +146,7 @@ def sanitize_config(cfg, choices, sensors):
         return int(max(PL_MIN_W, min(PL_MAX_W, v)))
     cfg["power_limit_w"] = _clamp_power(cfg.get("power_limit_w"))
     cfg["power_floor_w"] = _clamp_power(cfg.get("power_floor_w"))
+    cfg["battery_power_w"] = _clamp_power(cfg.get("battery_power_w"))
     cfg["gpu_power_limit_w"] = _clamp_power(cfg.get("gpu_power_limit_w"))
     cfg["power_auto"] = bool(cfg.get("power_auto")) if isinstance(
         cfg.get("power_auto"), bool) else False
@@ -681,10 +683,19 @@ class Daemon:
         if not self.hw.has_power:
             return
         base = self.hw.power_base_w
-        if emergency or battery:
+        if emergency:
             cap = self.config.get("power_limit_w", 0)
             if base:
                 cap = base if cap == 0 else min(cap, base)
+        elif battery:
+            # use the tuned battery point if set, else fall back to base TDP
+            bw = self.config.get("battery_power_w", 0)
+            if bw and bw > 0:
+                cap = bw
+            else:
+                cap = self.config.get("power_limit_w", 0)
+                if base:
+                    cap = base if cap == 0 else min(cap, base)
         elif self.config.get("power_auto") and base:
             t = self.policy_temp()
             if t is None:
@@ -768,6 +779,7 @@ class Daemon:
                     "limit_w": self.config.get("power_limit_w", 0),
                     "auto": self.config.get("power_auto", False),
                     "floor_w": self.config.get("power_floor_w", 0),
+                    "battery_w": self.config.get("battery_power_w", 0),
                     "current_w": self.hw.get_power_w(),
                     "base_w": self.hw.power_base_w,
                     "min_w": PL_MIN_W,
@@ -827,7 +839,8 @@ class Daemon:
                     changes["sensor"] = sv
                 else:
                     rejected.append("sensor")
-            for pk in ("power_limit_w", "power_floor_w", "gpu_power_limit_w"):
+            for pk in ("power_limit_w", "power_floor_w", "battery_power_w",
+                       "gpu_power_limit_w"):
                 if pk in msg:
                     # 0 = unmanaged; otherwise a real number (clamped later)
                     if _coerce_num(msg[pk], 0, PL_MAX_W) is None:

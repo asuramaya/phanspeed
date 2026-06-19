@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+"""phanspeed-tune — closed-loop RAPL power auto-tuner (Tier 1, safe).
+
+Sweeps the CPU package power cap (RAPL PL1/PL2) under a controlled all-core load,
+measures steady-state temperature, package power and achieved clock at each step,
+and derives two operating points:
+
+  * AC      : the highest cap whose steady temp stays under the thermal ceiling
+              (max sustained performance).
+  * battery : the cap with the best MHz-per-watt (the efficiency knee).
+
+It writes both into phanspeed's config over the control socket
+(power_limit_w + battery_power_w) so the daemon applies the right one per
+plug-state. RAPL can only make the chip slower, never wrong, so this needs no
+stability gate — unlike undervolt tuning (see docs/AUTOTUNE.md).
+
+The phanspeed daemon stays running throughout (its emergency failsafe remains
+armed); we just tell it to stop managing CPU power for the duration, then drive
+the RAPL node directly. Design: docs/AUTOTUNE.md.
+"""
+import argparse
+import glob
+import json
+import multiprocessing as mp
+import os
+import socket
+import sys
+import time
+
+SOCK_PATH = "/run/phanspeed/control.sock"
+RAPL_GLOB = "/sys/class/powercap/intel-rapl:*"
+CPU_FREQ_GLOB = "/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"
+PL_MIN_W, PL_MAX_W = 8, 250
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _read_int(path):
+    v = _read(path)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def sock_cmd(obj, timeout=3):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect(SOCK_PATH)
+    s.sendall(json.dumps(obj).encode() + b"\n")
+    data = s.recv(1 << 16).split(b"\n", 1)[0]
+    s.close()
+    return json.loads(data)
+
+
+# --- RAPL package domain ---------------------------------------------------- #
+class Rapl:
+    def __init__(self):
+        self.pl1 = self.pl2 = self.energy = self.erange = None
+        self.base_w = self.default_uw = None
+        for d in sorted(glob.glob(RAPL_GLOB)):
+            if not (_read(os.path.join(d, "name")) or "").startswith("package"):
+                continue
+            pl1 = os.path.join(d, "constraint_0_power_limit_uw")
+            if not (os.path.exists(pl1) and os.access(pl1, os.W_OK)):
+                continue
+            self.pl1 = pl1
+            self.default_uw = _read_int(pl1)
+            pl2 = os.path.join(d, "constraint_1_power_limit_uw")
+            self.pl2 = pl2 if os.path.exists(pl2) and os.access(pl2, os.W_OK) else None
+            base = _read_int(os.path.join(d, "constraint_0_max_power_uw"))
+            self.base_w = round(base / 1e6) if base else None
+            self.energy = os.path.join(d, "energy_uj")
+            self.erange = _read_int(os.path.join(d, "max_energy_range_uj"))
+            break
+        if not self.pl1:
+            sys.exit("no writable RAPL package domain found (need root).")
+
+    def set_cap(self, watts):
+        uw = str(int(watts * 1_000_000))
+        with open(self.pl1, "w") as f:
+            f.write(uw)
+        if self.pl2:
+            try:
+                with open(self.pl2, "w") as f:
+                    f.write(uw)
+            except OSError:
+                pass
+
+    def restore(self):
+        if self.default_uw:
+            with open(self.pl1, "w") as f:
+                f.write(str(self.default_uw))
+            if self.pl2:
+                try:
+                    with open(self.pl2, "w") as f:
+                        f.write(str(self.default_uw))
+                except OSError:
+                    pass
+
+    def power_w(self, dt=0.5):
+        """Average package power over dt seconds via the energy counter."""
+        e0 = _read_int(self.energy)
+        if e0 is None:
+            return None
+        time.sleep(dt)
+        e1 = _read_int(self.energy)
+        if e1 is None:
+            return None
+        d = e1 - e0
+        if d < 0 and self.erange:
+            d += self.erange
+        return (d / 1e6) / dt
+
+
+def temp_max_c():
+    vals = []
+    for t in glob.glob("/sys/class/hwmon/hwmon*/temp*_input"):
+        v = _read_int(t)
+        if v is not None:
+            vals.append(v / 1000.0)
+    return max(vals) if vals else None
+
+
+def avg_mhz():
+    vals = [(_read_int(p) or 0) / 1000.0 for p in glob.glob(CPU_FREQ_GLOB)]
+    vals = [v for v in vals if v]
+    return sum(vals) / len(vals) if vals else None
+
+
+# --- load ------------------------------------------------------------------- #
+def _burn(stop):
+    x = 1.000001
+    while not stop.is_set():
+        for _ in range(200000):
+            x = (x * 1.0000001 + 0.5) % 1e6
+
+
+class Load:
+    def __init__(self, n):
+        self.stop = mp.Event()
+        self.procs = [mp.Process(target=_burn, args=(self.stop,), daemon=True)
+                      for _ in range(n)]
+
+    def __enter__(self):
+        for p in self.procs:
+            p.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        for p in self.procs:
+            p.join(timeout=2)
+            if p.is_alive():
+                p.terminate()
+
+
+# --- the sweep -------------------------------------------------------------- #
+def sweep(rapl, ceiling, lo, hi, step, dwell, emergency):
+    rows = []
+    caps = list(range(lo, hi + 1, step))
+    print(f"sweeping {lo}→{hi} W in {step} W steps, "
+          f"{dwell}s dwell, ceiling {ceiling}°C\n")
+    print(f"  {'cap':>5} {'temp':>6} {'power':>7} {'clock':>8}  verdict")
+    with Load(os.cpu_count() or 4):
+        for cap in caps:
+            rapl.set_cap(cap)
+            t_samples, settle = [], dwell // 2
+            aborted = False
+            for sec in range(dwell):
+                time.sleep(1)
+                tc = temp_max_c()
+                if tc is not None and sec >= settle:
+                    t_samples.append(tc)
+                # hard guard: never let the daemon's emergency latch decide for us
+                if tc is not None and tc >= emergency - 1:
+                    aborted = True
+                    break
+            temp = max(t_samples) if t_samples else temp_max_c()
+            power = rapl.power_w()
+            mhz = avg_mhz()
+            effv = (mhz / power) if (mhz and power) else 0
+            row = {"cap": cap, "temp": temp, "power": power, "mhz": mhz, "eff": effv}
+            rows.append(row)
+            mark = "ABORT (near emergency)" if aborted else (
+                "over ceiling — stop" if temp and temp > ceiling else "ok")
+            print(f"  {cap:>4}W {temp:>5.0f}° {power or 0:>6.1f}W "
+                  f"{mhz or 0:>6.0f}MHz  {mark}")
+            if aborted or (temp and temp > ceiling):
+                break
+    return rows
+
+
+def pick(rows, ceiling):
+    under = [r for r in rows if r["temp"] and r["temp"] <= ceiling]
+    ac = max(under, key=lambda r: r["cap"]) if under else (rows[0] if rows else None)
+    eff = [r for r in rows if r["eff"] > 0]
+    batt = max(eff, key=lambda r: r["eff"]) if eff else ac
+    return ac, batt
+
+
+def main():
+    ap = argparse.ArgumentParser(description="PhanSpeed RAPL power auto-tuner")
+    ap.add_argument("--target", choices=["ac", "battery", "both"], default="both")
+    ap.add_argument("--ceiling", type=int, default=85, help="thermal ceiling °C")
+    ap.add_argument("--lo", type=int, default=25, help="lowest cap to try (W)")
+    ap.add_argument("--hi", type=int, default=90, help="highest cap to try (W)")
+    ap.add_argument("--step", type=int, default=10, help="cap step (W)")
+    ap.add_argument("--dwell", type=int, default=60, help="seconds per step")
+    ap.add_argument("--apply", action="store_true",
+                    help="write the results into phanspeed config")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="show the plan and exit (no stress)")
+    args = ap.parse_args()
+
+    if os.geteuid() != 0:
+        sys.exit("phanspeed-tune must run as root (it drives the RAPL node).")
+    lo = max(PL_MIN_W, min(args.lo, PL_MAX_W))
+    hi = max(lo, min(args.hi, PL_MAX_W))
+
+    try:
+        st = sock_cmd({"cmd": "get"})
+    except OSError as e:
+        sys.exit(f"cannot reach phanspeedd ({e}); is the service running?")
+    cfg0 = st.get("config") or {}
+    emergency = cfg0.get("emergency_temp", 90)
+    orig_plw = cfg0.get("power_limit_w", 0)        # restore this if we don't apply
+    ceiling = min(args.ceiling, emergency - 2)
+    rapl = Rapl()
+    print(f"chip base TDP: {rapl.base_w} W | firmware default PL1: "
+          f"{round((rapl.default_uw or 0) / 1e6)} W | emergency: {emergency}°C")
+
+    if args.dry_run:
+        caps = list(range(lo, hi + 1, args.step))
+        print(f"would sweep {caps} W, {args.dwell}s each "
+              f"(~{len(caps) * args.dwell // 60} min), ceiling {ceiling}°C")
+        return 0
+
+    # disarm the daemon's power management (failsafe stays armed), let it settle
+    print("disarming daemon power management (failsafe stays on)…")
+    sock_cmd({"cmd": "set", "power_limit_w": 0})
+    time.sleep(4)
+    applied = False
+    try:
+        rows = sweep(rapl, ceiling, lo, hi, args.step, args.dwell, emergency)
+        if not rows:
+            sys.exit("no measurements taken.")
+        ac, batt = pick(rows, ceiling)
+        print(f"\nresult:\n  AC (max perf ≤{ceiling}°C): {ac['cap']} W "
+              f"@ {ac['temp']:.0f}°C, {ac['mhz']:.0f} MHz")
+        print(f"  battery (best MHz/W) : {batt['cap']} W "
+              f"@ {batt['eff']:.0f} MHz/W")
+        if args.apply or _confirm():
+            changes = {"cmd": "set"}
+            if args.target in ("ac", "both"):
+                changes["power_limit_w"] = ac["cap"]
+            if args.target in ("battery", "both"):
+                changes["battery_power_w"] = batt["cap"]
+            sock_cmd(changes)
+            applied = True
+            print(f"applied + persisted: {[k for k in changes if k != 'cmd']}")
+    finally:
+        rapl.restore()
+        if not applied:
+            # leave the config exactly as we found it
+            sock_cmd({"cmd": "set", "power_limit_w": orig_plw})
+            print("not applied; original config restored.")
+    return 0
+
+
+def _confirm():
+    try:
+        return input("\napply these to phanspeed config? [y/N] ").strip().lower() \
+            in ("y", "yes")
+    except EOFError:
+        return False
+
+
+if __name__ == "__main__":
+    sys.exit(main())

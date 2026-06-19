@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-06-19
+
+### Added
+- **`phanspeed-tune` — closed-loop RAPL power auto-tuner (Tier 1, safe).** Sweeps
+  the CPU package power cap under a controlled all-core load, measures
+  steady-state temp/power/clock per step, and derives two operating points: the
+  highest cap under a thermal ceiling (**AC, max sustained performance**) and the
+  best MHz-per-watt knee (**battery, efficiency**). `--apply` writes both to the
+  config; `--dry-run` shows the plan without stressing. The daemon stays up with
+  its failsafe armed during a sweep (tuner disarms only its power management).
+- **Adaptive battery power point** — new `battery_power_w` config: when set, the
+  daemon uses it as the CPU cap on battery instead of falling back to base TDP, so
+  AC and battery each get their own tuned ceiling. Covered by both fuzz suites.
+- **`docs/AUTOTUNE.md`** — the auto-tuner design: objective (adaptive AC/battery),
+  the calibration state machine, daemon coordination, and the safety model
+  (self-checking workload + probation/boot-watchdog) required before the gated
+  undervolt auto-tuner can ship.
+
 ## [0.8.0] — 2026-06-19
 
 ### Added

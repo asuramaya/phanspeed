@@ -15,7 +15,8 @@ echo balanced > /sys/firmware/acpi/platform_profile 2>/dev/null || true
 rm -f /etc/systemd/system/phanspeed.service \
       /etc/systemd/system/phanspeed-healthcheck.service \
       /etc/systemd/system/phanspeed-healthcheck.timer
-rm -f /usr/local/bin/phanspeedd /usr/local/bin/phanspeed-healthcheck
+rm -f /usr/local/bin/phanspeedd /usr/local/bin/phanspeed-healthcheck \
+      /usr/local/bin/phanspeed-tune
 systemctl daemon-reload
 
 # disable + remove the extension as the user
