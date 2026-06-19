@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+
+if [ "$1" = configure ]; then
+    systemctl daemon-reload || true
+    # migrate off a previous install.sh deployment (units in /etc, bins in
+    # /usr/local) so the packaged copies are the ones that run
+    if [ -f /etc/systemd/system/phanspeed.service ]; then
+        systemctl disable --now phanspeed.service 2>/dev/null || true
+        rm -f /etc/systemd/system/phanspeed.service \
+              /etc/systemd/system/phanspeed-healthcheck.service \
+              /etc/systemd/system/phanspeed-healthcheck.timer
+        rm -f /usr/local/bin/phanspeedd /usr/local/bin/phanspeed-healthcheck \
+              /usr/local/bin/phanspeed-tune /usr/local/bin/phanspeed-update
+        systemctl daemon-reload || true
+    fi
+    systemctl enable --now phanspeed.service || true
+    systemctl enable --now phanspeed-healthcheck.timer || true
+    systemctl enable --now phanspeed-update.timer || true
+    echo "PhanSpeed installed. Enable the pill for your user with:"
+    echo "    gnome-extensions enable phanspeed@local"
+    echo "  (then log out/in once on Wayland), then auto-tune with:"
+    echo "    sudo phanspeed-tune --target both --apply"
+fi
+
+exit 0

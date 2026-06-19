@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+
+systemctl daemon-reload 2>/dev/null || true
+if [ "$1" = purge ]; then
+    rm -rf /etc/phanspeed /run/phanspeed
+fi
+
+exit 0

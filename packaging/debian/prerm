@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -e
+
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    systemctl disable --now phanspeed.service 2>/dev/null || true
+    systemctl disable --now phanspeed-healthcheck.timer 2>/dev/null || true
+    systemctl disable --now phanspeed-update.timer 2>/dev/null || true
+fi
+
+exit 0

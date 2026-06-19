@@ -1,0 +1,15 @@
+Package: phanspeed
+Version: @VERSION@
+Architecture: all
+Maintainer: asuramaya <asuramaya@users.noreply.github.com>
+Depends: python3, systemd
+Recommends: gnome-shell, nvidia-smi
+Section: utils
+Priority: optional
+Homepage: https://github.com/asuramaya/phanspeed
+Description: Dell thermal/fan control daemon + GNOME Quick Settings pill
+ PhanSpeed drives the working thermal levers on locked-down Dell laptops
+ (Precision/XPS): the ACPI platform_profile, Intel RAPL CPU power caps, HWP
+ energy-performance preference, and an emergency thermal failsafe. It includes a
+ closed-loop power auto-tuner and a GNOME Shell Quick Settings pill, plus an
+ optional self-updater. Pure Python standard library; no pip dependencies.

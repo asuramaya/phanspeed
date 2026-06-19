@@ -90,13 +90,31 @@ asserts the failsafe invariants always hold). Run: `python3 tests/attack_socket.
 
 ## Install
 
+**Option A — `.deb` (recommended; gets auto-updates):**
+
+```bash
+sudo apt install ./phanspeed_*.deb        # from a GitHub release, or `make deb`
+gnome-extensions enable phanspeed@local   # then log out/in once (Wayland)
+```
+
+The package installs the daemon, healthcheck, auto-tuner, the system-wide
+extension, and an **auto-update** timer (`phanspeed-update.timer`, daily) that
+pulls newer releases from GitHub and installs them — verifying the download's
+SHA256 against the release's `SHA256SUMS`. Disable it any time with
+`sudo systemctl disable --now phanspeed-update.timer`. (HTTPS + checksum is
+transport/corruption integrity, not a GPG signature — signing is planned.)
+
+**Option B — from source:**
+
 ```bash
 cd phanspeed
 ./install.sh          # sudo: daemon + service, then extension into your home
 ```
 
-Then **log out and back in once** — Wayland has to restart the shell to load a
-brand-new extension. After that the pill is there permanently; no more logouts.
+Either way, **log out and back in once** — Wayland has to restart the shell to
+load a brand-new extension. After that the pill is there permanently; no more
+logouts. (Auto-update is a `.deb`-only feature; source installs update via
+`git pull && ./install.sh`.)
 
 ## Files
 

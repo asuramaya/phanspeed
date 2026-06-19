@@ -1,0 +1,11 @@
+[Unit]
+Description=PhanSpeed auto-update (check GitHub releases, install newer .deb)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root and installs a system package, so it can't be sandboxed like the
+# daemon. It's a short-lived oneshot and the only PhanSpeed component with
+# network access — the privileged control loop (phanspeedd) stays networkless.
+ExecStart=/usr/local/bin/phanspeed-update

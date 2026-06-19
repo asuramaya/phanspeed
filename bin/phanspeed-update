@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+"""phanspeed-update — pull newer PhanSpeed releases from GitHub and install them.
+
+Checks the repo's latest GitHub release, compares it to the installed package
+version, and (unless --check) downloads the .deb asset, verifies its SHA256
+against the release's SHA256SUMS, and installs it with dpkg. Intended to run from
+phanspeed-update.timer (daily) as root.
+
+This is deliberately a SEPARATE program from the daemon: phanspeedd is hardened
+with no network access at all (IPAddressDeny=any), so the one component that
+reaches the internet is this small, isolated updater — never the privileged
+control loop.
+
+Integrity note: downloads are over HTTPS (GitHub as trust anchor) and verified
+against the published SHA256SUMS. That protects against corruption/partial
+downloads; it is NOT a cryptographic signature. GPG-signed releases are a planned
+hardening step — see CHANGELOG.
+"""
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+REPO = "asuramaya/phanspeed"
+API = f"https://api.github.com/repos/{REPO}/releases/latest"
+PKG = "phanspeed"
+VERSION_FILE = "/usr/share/phanspeed/VERSION"
+
+
+def installed_version():
+    try:
+        out = subprocess.check_output(
+            ["dpkg-query", "-W", "-f=${Version}", PKG],
+            stderr=subprocess.DEVNULL)
+        v = out.decode().strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    try:
+        with open(VERSION_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3])
+
+
+def fetch(url, binary=False, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": "phanspeed-update"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (https)
+        data = r.read()
+    return data if binary else data.decode()
+
+
+def main():
+    check_only = "--check" in sys.argv
+    cur = installed_version()
+    if cur is None:
+        print("not a .deb install — auto-update supports the packaged install only.")
+        return 0
+    try:
+        rel = json.loads(fetch(API))
+    except Exception as e:
+        print(f"update check failed (offline?): {e}")
+        return 0
+    tag = (rel.get("tag_name") or "").lstrip("v")
+    if not tag:
+        print("no release tag found.")
+        return 0
+    if vtuple(tag) <= vtuple(cur):
+        print(f"up to date (installed {cur}, latest {tag}).")
+        return 0
+
+    print(f"update available: {cur} -> {tag}")
+    if check_only:
+        return 0
+
+    assets = {a.get("name"): a.get("browser_download_url")
+              for a in rel.get("assets", []) if a.get("name")}
+    deb = next((n for n in assets if n.endswith(".deb")), None)
+    if not deb:
+        print("latest release has no .deb asset; nothing to install.")
+        return 1
+
+    data = fetch(assets[deb], binary=True)
+    if "SHA256SUMS" in assets:
+        try:
+            sums = fetch(assets["SHA256SUMS"])
+        except Exception:
+            sums = ""
+        want = None
+        for line in sums.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1].lstrip("*") == deb:
+                want = parts[0]
+        if want:
+            if want != hashlib.sha256(data).hexdigest():
+                print(f"CHECKSUM MISMATCH for {deb} — aborting.")
+                return 1
+            print("sha256 verified.")
+        else:
+            print("warning: SHA256SUMS present but no entry for the .deb.")
+    else:
+        print("warning: no SHA256SUMS in release; relying on HTTPS only.")
+
+    tmp = os.path.join(tempfile.gettempdir(), deb)
+    with open(tmp, "wb") as f:
+        f.write(data)
+    try:
+        r = subprocess.run(["dpkg", "-i", tmp])
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if r.returncode == 0:
+        print(f"updated to {tag}.")
+    else:
+        print(f"dpkg failed (rc={r.returncode}); will retry next run.")
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

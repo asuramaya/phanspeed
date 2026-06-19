@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] — 2026-06-19
+
+### Added
+- **`.deb` package** — `make deb` (or `packaging/build-deb.sh`) builds an
+  installable `phanspeed_<ver>_all.deb` with `dpkg-deb` (no debhelper). Ships the
+  daemon, healthcheck, auto-tuner, updater, the system-wide GNOME extension, and a
+  default config (marked a conffile so upgrades don't clobber edits). postinst
+  enables the services and migrates off a prior `install.sh` deployment. CI now
+  builds the package on every push.
+- **Auto-updates** — `phanspeed-update` checks the latest GitHub release, compares
+  it to the installed version, and installs a newer `.deb`, verifying the download
+  against the release's `SHA256SUMS`. Driven by `phanspeed-update.timer` (daily,
+  enabled by the package). It's a deliberately separate, isolated component — the
+  hardened daemon keeps `IPAddressDeny=any`, so only the updater touches the
+  network. Pure stdlib (`urllib`). Releases now publish a `SHA256SUMS` asset.
+
+### Security note
+The updater uses HTTPS + SHA256 verification (transport/corruption integrity with
+GitHub as trust anchor); it is **not** a cryptographic signature. GPG-signed
+releases are a planned hardening step.
+
 ## [0.11.0] — 2026-06-19
 
 ### Added

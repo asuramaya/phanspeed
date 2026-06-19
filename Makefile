@@ -1,7 +1,7 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := extension/phanspeed@local
 
-.PHONY: help install uninstall lint test pack check verify-unit clean
+.PHONY: help install uninstall lint test pack deb check verify-unit clean
 
 help:
 	@echo "PhanSpeed targets:"
@@ -11,6 +11,7 @@ help:
 	@echo "  make lint        ruff + shellcheck"
 	@echo "  make test        adversarial fuzz suite (needs Dell hardware)"
 	@echo "  make pack        build the extensions.gnome.org zip"
+	@echo "  make deb         build the .deb package"
 	@echo "  make clean       remove build artifacts"
 
 install:
@@ -21,14 +22,16 @@ uninstall:
 
 lint:
 	ruff check .
-	shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck
+	shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck \
+		packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm \
+		packaging/debian/postrm
 
 verify-unit:
 	@systemd-analyze verify ./systemd/phanspeed.service 2>&1 \
 		| grep -v 'not executable' | { ! grep . ; } && echo "unit OK"
 
 check: lint verify-unit
-	python3 -m py_compile bin/phanspeedd bin/phanspeed-tune diag.py
+	python3 -m py_compile bin/phanspeedd bin/phanspeed-tune bin/phanspeed-update diag.py
 	python3 tests/test_validation.py
 	node --check $(EXT)/extension.js
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
@@ -39,6 +42,9 @@ test:
 
 pack:
 	./make-extension-zip.sh
+
+deb:
+	bash packaging/build-deb.sh
 
 clean:
 	rm -rf dist __pycache__ bin/__pycache__ tests/__pycache__
