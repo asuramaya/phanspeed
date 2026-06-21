@@ -238,6 +238,7 @@ class Hardware:
                 (n for n in names if n in self.choices), self.choices[0])
         self._discover_rapl()
         self._discover_cpu_pref()
+        self._discover_cpufreq()
         self.gpu = Gpu()
 
     # ---- RAPL CPU power limit (PL1) ---- #
@@ -300,6 +301,29 @@ class Hardware:
             avail = _read(os.path.join(os.path.dirname(os.path.dirname(
                 self.epp_paths[0])), EPP_AVAIL_LEAF))
             self.epp_choices = [c for c in (avail or "").split() if c in VALID_EPP]
+
+    # ---- CPU frequency readback (for power-clamp detection) ---- #
+    def _discover_cpufreq(self):
+        self.freq_cur_paths = sorted(
+            glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"))
+        self._freq_min_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq"
+        self._freq_max_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
+
+    @property
+    def has_cpufreq(self):
+        return bool(self.freq_cur_paths)
+
+    def cpu_freq_mhz(self):
+        """(highest current core MHz, min MHz, max MHz) or (None, None, None)."""
+        if not self.has_cpufreq:
+            return (None, None, None)
+        cur = [_read_int(p) for p in self.freq_cur_paths]
+        cur = [c for c in cur if c]
+        if not cur:
+            return (None, None, None)
+        fmin = _read_int(self._freq_min_path) or 0
+        fmax = _read_int(self._freq_max_path) or 0
+        return (max(cur) // 1000, fmin // 1000, fmax // 1000)
 
     @property
     def has_turbo(self):
@@ -515,6 +539,8 @@ class Daemon:
         self._gpu_pm = False            # have we enabled GPU persistence mode?
         self._turbo_dirty = False       # have we changed the turbo state?
         self._epp_dirty = False         # have we changed the EPP preference?
+        self._stat_prev = None          # last /proc/stat (idle, total) for busy%
+        self._busy_pct = None           # CPU busy% over the last poll
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -580,7 +606,45 @@ class Daemon:
             return self.hw.max_crit_temp()
         return self.hw.read_temp(sid)
 
+    def _sample_busy(self):
+        """CPU busy% since the last call, from /proc/stat (idle+iowait vs total)."""
+        try:
+            with open("/proc/stat") as f:
+                parts = [int(x) for x in f.readline().split()[1:]]
+        except (OSError, ValueError):
+            self._busy_pct = None
+            return
+        idle, total = parts[3] + parts[4], sum(parts)
+        prev, self._stat_prev = self._stat_prev, (idle, total)
+        if not prev:
+            self._busy_pct = None
+            return
+        di, dt = idle - prev[0], total - prev[1]
+        self._busy_pct = max(0.0, min(100.0, 100.0 * (1 - di / dt))) if dt > 0 else None
+
+    def clamp_status(self):
+        """Detect a hardware power clamp: under real load the top core is pinned
+        near the frequency floor while there's ample thermal headroom and the
+        platform could clock much higher. The classic cause is BD PROCHOT from a
+        power-budget shortfall — a USB-C device drawing power, an underpowered
+        charger, or a battery limit — not heat."""
+        cmax, fmin, fmax = self.hw.cpu_freq_mhz()
+        out = {"clamped": False, "cur_max_mhz": cmax, "min_mhz": fmin,
+               "max_mhz": fmax, "busy_pct": (round(self._busy_pct)
+               if self._busy_pct is not None else None), "reason": ""}
+        if cmax is None or not fmin or not fmax or self.emergency:
+            return out
+        crit = self.hw.max_crit_temp()
+        cool = crit is None or crit < self.config["emergency_temp"] - 5
+        if (self._busy_pct is not None and self._busy_pct >= 35
+                and fmax > fmin * 1.5 and cmax <= fmin * 1.2 and cool):
+            out["clamped"] = True
+            out["reason"] = ("power budget — a USB-C device drawing power, an "
+                             "underpowered charger, or a battery limit")
+        return out
+
     def apply_once(self):
+        self._sample_busy()
         with self.lock:
             crit = self.hw.max_crit_temp()
             hi, lo = self.config["emergency_temp"], self.config["emergency_clear_temp"]
@@ -799,6 +863,7 @@ class Daemon:
                     "battery_epp_cfg": self.config.get("battery_epp", ""),
                     "epp_choices": self.hw.epp_choices,
                 },
+                "cpu_clamp": self.clamp_status(),
                 "config": self.config,
             }
 
@@ -1023,6 +1088,8 @@ def selftest():
     turbo = ("on" if hw.get_turbo() else "off") if hw.has_turbo else "n/a"
     print(f"turbo        : {turbo}")
     print(f"epp          : {hw.get_epp() or 'n/a'}  (choices: {' '.join(hw.epp_choices) or 'none'})")
+    cmax, fmin, fmax = hw.cpu_freq_mhz()
+    print(f"cpu freq     : {cmax or '?'} MHz now  (range {fmin or '?'}–{fmax or '?'} MHz)")
     print(f"gpu          : {hw.gpu.name if hw.gpu.available else 'n/a'}")
     if hw.max_crit_temp() is None:
         ok = False

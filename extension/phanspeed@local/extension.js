@@ -2,12 +2,13 @@
 // Copyright (C) 2026 asuramaya and PhanSpeed contributors
 //
 // PhanSpeed — Dell thermal/fan control as a GNOME Quick Settings pill.
-// Reads the daemon's world-readable status snapshot for display, and sends
-// control commands to the daemon's Unix socket on user action.
+// Reads the daemon's status snapshot for display and sends control commands to
+// the daemon's Unix socket on user action.
 
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -24,14 +25,11 @@ const PROFILE_ICON = {
     performance: 'power-profile-performance-symbolic',
 };
 const PROFILE_LABEL = {
-    quiet: 'Quiet', balanced: 'Balanced', cool: 'Cool', performance: 'Performance',
+    quiet: 'Quiet', balanced: 'Balanced', cool: 'Cool', performance: 'Perf',
 };
 const EPP_LABEL = {
-    performance: 'Performance',
-    balance_performance: 'Balanced (perf)',
-    default: 'Default',
-    balance_power: 'Balanced (power)',
-    power: 'Power saving',
+    performance: 'Performance', balance_performance: 'Balanced (perf)',
+    default: 'Default', balance_power: 'Balanced (power)', power: 'Power saving',
 };
 const EPP_SHORT = {
     performance: 'perf', balance_performance: 'bal-perf', default: 'def',
@@ -39,8 +37,31 @@ const EPP_SHORT = {
 };
 const DEFAULT_ICON = 'power-profile-balanced-symbolic';
 
+// concept palette
+const ACCENT = '#b9acff';
+const DIM = '#9aa0a6';
+const CHIP = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#dedde6;'
+    + ' background-color:rgba(255,255,255,0.07);';
+const CHIP_ON = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#ffffff;'
+    + ' font-weight:bold; background-color:#5b50a8;';
+
 function isObj(v) {
     return v && typeof v === 'object' && !Array.isArray(v);
+}
+function num(v) {
+    return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+function tColor(t) {
+    if (t == null)
+        return DIM;
+    if (t < 60)
+        return '#4caf50';
+    if (t < 80)
+        return '#ffbb33';
+    return '#ff5b5b';
+}
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 
 function readStatus() {
@@ -49,7 +70,7 @@ function readStatus() {
         if (!ok)
             return null;
         const o = JSON.parse(new TextDecoder().decode(bytes));
-        return isObj(o) ? o : null;     // defensively reject non-objects
+        return isObj(o) ? o : null;
     } catch (_e) {
         return null;
     }
@@ -59,7 +80,6 @@ function readStatus() {
 let _cancellable = null;
 
 function sendCmd(obj) {
-    // Fully asynchronous: connect -> write -> close, never blocking the shell.
     const client = new Gio.SocketClient();
     client.timeout = 2;
     const addr = new Gio.UnixSocketAddress({path: SOCK_PATH});
@@ -90,20 +110,30 @@ function sendCmd(obj) {
 const PhanToggle = GObject.registerClass(
 class PhanToggle extends QuickMenuToggle {
     _init() {
-        super._init({
-            title: 'PhanSpeed',
-            iconName: DEFAULT_ICON,
-            toggleMode: true,
-        });
-
+        super._init({title: 'PhanSpeed', iconName: DEFAULT_ICON, toggleMode: true});
         this.menu.setHeader(DEFAULT_ICON, 'PhanSpeed', 'Thermal control');
 
+        // profile chips (horizontal row)
         this._profileItems = {};
         this._profileSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._profileSection);
 
-        // CPU turbo + energy-preference live in their own section so they keep
-        // their place regardless of which power/GPU submenus get inserted.
+        // power-clamp / alert banner (hidden until something's wrong)
+        this._alertSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._alertSection);
+        this._clampItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._clampItem.visible = false;
+        this._alertSection.addMenuItem(this._clampItem);
+
+        // power + gpu submenus go in their own section (built lazily)
+        this._powerSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._powerSection);
+        this._powerSub = null;
+        this._powerItems = {};
+        this._gpuSub = null;
+        this._gpuItems = {};
+
+        // turbo + energy preference
         this._cpuPrefSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._cpuPrefSection);
         this._cpuPrefBuilt = false;
@@ -111,15 +141,7 @@ class PhanToggle extends QuickMenuToggle {
         this._eppSub = null;
         this._eppItems = {};
 
-        // power-limit submenus (added only when the hardware is available)
-        this._powerSub = null;
-        this._powerItems = {};
-        this._gpuSub = null;
-        this._gpuItems = {};
-
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        // Quiet on battery
         this._batteryItem = new PopupMenu.PopupSwitchMenuItem('Quiet on battery', false);
         this._batteryItem.connect('toggled', (_i, state) => {
             sendCmd({cmd: 'set', battery_aware: state});
@@ -128,65 +150,61 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._batteryItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        // adaptive scenes (AC vs battery power+EPP), active one marked
         this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._sceneItem);
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._tempItem);
 
-        // Clicking the pill body toggles Auto (checked) on/off.
+        // clicking the pill body toggles Auto on/off
         this.connect('clicked', () => {
             sendCmd({cmd: 'set', mode: this.checked ? 'auto' : 'manual'});
             this._scheduleRefresh();
         });
-
         this._built = false;
     }
 
     _buildProfiles(choices) {
         this._profileSection.removeAll();
         this._profileItems = {};
+        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const box = new St.BoxLayout({x_expand: true});
         for (const name of choices) {
-            const item = new PopupMenu.PopupMenuItem(PROFILE_LABEL[name] || name);
-            item.connect('activate', () => {
+            const btn = new St.Button({
+                label: PROFILE_LABEL[name] || name,
+                x_expand: true, can_focus: true, style: CHIP,
+            });
+            btn.connect('clicked', () => {
                 sendCmd({cmd: 'set', mode: 'manual', manual_profile: name});
                 this._scheduleRefresh();
             });
-            this._profileSection.addMenuItem(item);
-            this._profileItems[name] = item;
+            box.add_child(btn);
+            this._profileItems[name] = btn;
         }
+        row.add_child(box);
+        this._profileSection.addMenuItem(row);
         this._built = true;
     }
 
     _buildPower(power) {
-        // presets derived from the chip's base TDP, plus "Full"
         const base = (typeof power.base_w === 'number' && power.base_w > 0)
             ? power.base_w : 45;
         const min = power.min_w || 8;
-        // a finer ladder than just quarters, so a moderate cap (~base*⅔, the
-        // sweet spot for a thermally-limited machine) is directly selectable
         const presets = [...new Set([1.0, 0.8, 0.66, 0.55, 0.44]
-            .map(r => Math.round(base * r)))]
-            .filter(w => w >= min).sort((a, b) => b - a);
+            .map(r => Math.round(base * r)))].filter(w => w >= min).sort((a, b) => b - a);
 
         this._powerSub = new PopupMenu.PopupSubMenuMenuItem('CPU power limit', true);
         this._powerSub.icon.icon_name = 'battery-symbolic';
         this._powerItems = {};
-
-        // "scale with temperature" switch at the top of the submenu
-        this._powerAutoItem = new PopupMenu.PopupSwitchMenuItem(
-            'Scale with temperature', false);
+        this._powerAutoItem = new PopupMenu.PopupSwitchMenuItem('Scale with temperature', false);
         this._powerAutoItem.connect('toggled', (_i, state) => {
             sendCmd({cmd: 'set', power_auto: state});
             this._scheduleRefresh();
         });
         this._powerSub.menu.addMenuItem(this._powerAutoItem);
         this._powerSub.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
         const add = (label, w) => {
             const it = new PopupMenu.PopupMenuItem(label);
             it.connect('activate', () => {
-                // picking a fixed cap turns off temperature scaling
                 sendCmd({cmd: 'set', power_auto: false, power_limit_w: w});
                 this._scheduleRefresh();
             });
@@ -196,22 +214,17 @@ class PhanToggle extends QuickMenuToggle {
         add('Full (default)', 0);
         for (const w of presets)
             add(`${w} W`, w);
-
-        // insert the submenu right after the profile section
-        this.menu.addMenuItem(this._powerSub, 1);
+        this._powerSection.addMenuItem(this._powerSub);
     }
 
     _buildGpu(gpu) {
         const min = Math.round(gpu.min_w || 1);
         const max = Math.round(gpu.max_w || 1);
         const presets = [...new Set([max, Math.round(max * 0.75),
-                                     Math.round(max * 0.5), min])]
-            .filter(w => w >= min && w <= max).sort((a, b) => b - a);
-
+            Math.round(max * 0.5), min])].filter(w => w >= min && w <= max).sort((a, b) => b - a);
         this._gpuSub = new PopupMenu.PopupSubMenuMenuItem('GPU power limit', true);
         this._gpuSub.icon.icon_name = 'video-display-symbolic';
         this._gpuItems = {};
-
         const add = (label, w) => {
             const it = new PopupMenu.PopupMenuItem(label);
             it.connect('activate', () => {
@@ -224,8 +237,7 @@ class PhanToggle extends QuickMenuToggle {
         add('Max (default)', 0);
         for (const w of presets)
             add(`${w} W`, w);
-
-        this.menu.addMenuItem(this._gpuSub, 2);
+        this._powerSection.addMenuItem(this._gpuSub);
     }
 
     _buildCpuPref(pref) {
@@ -233,7 +245,6 @@ class PhanToggle extends QuickMenuToggle {
         this._eppItems = {};
         this._turboItem = null;
         this._eppSub = null;
-
         if (pref.turbo_available) {
             this._turboItem = new PopupMenu.PopupSwitchMenuItem('Turbo boost', false);
             this._turboItem.connect('toggled', (_i, state) => {
@@ -242,9 +253,7 @@ class PhanToggle extends QuickMenuToggle {
             });
             this._cpuPrefSection.addMenuItem(this._turboItem);
         }
-
-        if (pref.epp_available && Array.isArray(pref.epp_choices) &&
-            pref.epp_choices.length) {
+        if (pref.epp_available && Array.isArray(pref.epp_choices) && pref.epp_choices.length) {
             this._eppSub = new PopupMenu.PopupSubMenuMenuItem('Energy preference', true);
             this._eppSub.icon.icon_name = 'power-profile-balanced-symbolic';
             const add = (label, val) => {
@@ -277,6 +286,7 @@ class PhanToggle extends QuickMenuToggle {
             this.subtitle = 'daemon offline';
             this.checked = false;
             this.iconName = DEFAULT_ICON;
+            this._clampItem.visible = false;
             this._tempItem.label.text = 'phanspeedd not running';
             return;
         }
@@ -286,11 +296,9 @@ class PhanToggle extends QuickMenuToggle {
         const power = isObj(st.power) ? st.power : {};
         if (!this._powerSub && power.available)
             this._buildPower(power);
-
         const gpuInfo = isObj(st.gpu) ? st.gpu : {};
         if (!this._gpuSub && gpuInfo.available)
             this._buildGpu(gpuInfo);
-
         const pref = isObj(st.cpu_pref) ? st.cpu_pref : {};
         if (!this._cpuPrefBuilt && (pref.turbo_available || pref.epp_available))
             this._buildCpuPref(pref);
@@ -301,66 +309,70 @@ class PhanToggle extends QuickMenuToggle {
         const onBattery = st.on_battery === true;
         const batteryAware = cfg.battery_aware === true;
         const temps = isObj(st.temps) ? st.temps : {};
-        const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+        const clamp = isObj(st.cpu_clamp) ? st.cpu_clamp : {};
         const cpu = num(temps['coretemp:Package id 0'] ?? temps['dell_ddv:CPU']);
         const gpuTemp = num(gpuInfo.temp) ?? num(temps['dell_ddv:Video']);
         const lbl = PROFILE_LABEL[profile] || profile || '—';
 
-        this.iconName = st.emergency
+        this.iconName = (st.emergency || clamp.clamped)
             ? 'power-profile-performance-symbolic'
             : (PROFILE_ICON[profile] || DEFAULT_ICON);
         this.checked = auto;
         this._batteryItem.setToggleState(batteryAware);
 
+        // subtitle (shown on the tile): clamp/emergency take priority
         let sub = auto ? `Auto · ${lbl}` : lbl;
         if (onBattery && batteryAware)
             sub = `🔋 ${lbl}`;
         if (cpu != null)
             sub += ` · ${Math.round(cpu)}°`;
+        if (clamp.clamped)
+            sub = `⚠ Clamped · ${clamp.cur_max_mhz} MHz`;
         if (st.emergency)
             sub = `⚠ Emergency · ${Math.round(cpu ?? 0)}°`;
         this.subtitle = sub;
 
-        for (const [name, item] of Object.entries(this._profileItems)) {
-            const active = !auto && name === profile;
-            item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        // profile chips: highlight the active one
+        for (const [name, btn] of Object.entries(this._profileItems))
+            btn.set_style(name === profile ? CHIP_ON : CHIP);
+
+        // clamp banner
+        if (clamp.clamped) {
+            this._clampItem.visible = true;
+            this._clampItem.label.clutter_text.set_markup(
+                `<span foreground="#ffbb33">⚠ CPU clamped at ${clamp.cur_max_mhz} MHz`
+                + ` — ${esc(clamp.reason || 'power limit')}</span>`);
+        } else {
+            this._clampItem.visible = false;
         }
 
-        // power submenu: label shows the live cap, ornament marks the active preset
         if (this._powerSub) {
             const pauto = power.auto === true;
-            const limit = num(power.limit_w) || 0;       // 0 = unmanaged
+            const limit = num(power.limit_w) || 0;
             const cur = num(power.current_w);
             this._powerAutoItem.setToggleState(pauto);
             if (pauto)
-                this._powerSub.label.text =
-                    `CPU power: auto${cur != null ? ` · ${cur} W` : ''}`;
+                this._powerSub.label.text = `CPU power: auto${cur != null ? ` · ${cur} W` : ''}`;
             else
                 this._powerSub.label.text = limit > 0
                     ? `CPU power: ${limit} W`
                     : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
-            for (const [w, item] of Object.entries(this._powerItems)) {
-                const active = !pauto && Number(w) === limit;
-                item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-            }
+            for (const [w, item] of Object.entries(this._powerItems))
+                item.setOrnament(!pauto && Number(w) === limit
+                    ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
-
-        // GPU submenu: label shows the live cap + draw, ornament marks the cap
         if (this._gpuSub) {
-            const cap = num(gpuInfo.cap_w) || 0;       // 0 = default/max
+            const cap = num(gpuInfo.cap_w) || 0;
             const lim = num(gpuInfo.limit);
             const draw = num(gpuInfo.draw);
             this._gpuSub.label.text = cap > 0
                 ? `GPU power: ${cap} W`
                 : `GPU power: ${lim != null ? `${Math.round(lim)} W` : 'max'}${
                     draw != null ? ` · ${Math.round(draw)} W draw` : ''}`;
-            for (const [w, item] of Object.entries(this._gpuItems)) {
-                const active = Number(w) === cap;
-                item.setOrnament(active ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-            }
+            for (const [w, item] of Object.entries(this._gpuItems))
+                item.setOrnament(Number(w) === cap
+                    ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
-
-        // turbo switch reflects the actual boost state; EPP submenu marks the cap
         if (this._turboItem)
             this._turboItem.setToggleState(pref.turbo === true);
         if (this._eppSub) {
@@ -369,43 +381,42 @@ class PhanToggle extends QuickMenuToggle {
             this._eppSub.label.text = eppCfg
                 ? `Energy: ${EPP_LABEL[eppCfg] || eppCfg}`
                 : `Energy: auto${eppCur ? ` · ${EPP_LABEL[eppCur] || eppCur}` : ''}`;
-            for (const [val, item] of Object.entries(this._eppItems)) {
+            for (const [val, item] of Object.entries(this._eppItems))
                 item.setOrnament(val === eppCfg
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-            }
         }
 
-        // adaptive scene readout: AC vs battery (power cap + EPP), active marked
+        // adaptive scene readout (AC vs battery)
         if (power.available) {
             const eppAvail = pref.epp_available === true;
             const acCapN = num(power.limit_w) || 0;
             const bCapN = num(power.battery_w) || 0;
             const acEpp = eppAvail
                 ? (typeof pref.epp_cfg === 'string' && pref.epp_cfg
-                    ? EPP_SHORT[pref.epp_cfg] || pref.epp_cfg : 'auto')
-                : null;
+                    ? EPP_SHORT[pref.epp_cfg] || pref.epp_cfg : 'auto') : null;
             const bEpp = eppAvail
                 ? EPP_SHORT[(typeof pref.battery_epp_cfg === 'string' &&
-                    pref.battery_epp_cfg) || 'balance_power'] || 'bal-pwr'
-                : null;
+                    pref.battery_epp_cfg) || 'balance_power'] || 'bal-pwr' : null;
             const ac = `🔌 ${acCapN > 0 ? `${acCapN}W` : 'full'}${acEpp ? `·${acEpp}` : ''}`;
             const bt = `🔋 ${bCapN > 0 ? `${bCapN}W` : 'base'}${bEpp ? `·${bEpp}` : ''}`;
-            this._sceneItem.label.text =
-                `${onBattery ? '  ' : '▶ '}${ac}    ${onBattery ? '▶ ' : '  '}${bt}`;
+            this._sceneItem.label.clutter_text.set_markup(
+                `<span foreground="${onBattery ? DIM : ACCENT}">${onBattery ? '  ' : '▶ '}${ac}</span>`
+                + `    <span foreground="${onBattery ? ACCENT : DIM}">${onBattery ? '▶ ' : '  '}${bt}</span>`);
         } else {
             this._sceneItem.label.text = '—';
         }
 
-        const line = [];
+        // colour-coded live readout
+        const parts = [];
         if (cpu != null)
-            line.push(`CPU ${Math.round(cpu)}°`);
+            parts.push(`CPU <span foreground="${tColor(cpu)}" font_weight="bold">${Math.round(cpu)}°</span>`);
         if (gpuTemp != null)
-            line.push(`GPU ${Math.round(gpuTemp)}°`);
-        const fans = Object.values(isObj(st.fans) ? st.fans : {})
-            .filter(isObj)
-            .map(f => `${String(f.label || 'Fan').replace(' Fan', '')} ${f.rpm ? f.rpm : 'off'}`);
-        this._tempItem.label.text =
-            [line.join('   '), fans.join('   ')].filter(s => s).join('   ·   ') || '—';
+            parts.push(`GPU <span foreground="${tColor(gpuTemp)}" font_weight="bold">${Math.round(gpuTemp)}°</span>`);
+        const fans = Object.values(isObj(st.fans) ? st.fans : {}).filter(isObj)
+            .map(f => `${esc(String(f.label || 'Fan').replace(' Fan', ''))} `
+                + `<span foreground="${ACCENT}">${f.rpm ? f.rpm : 'off'}</span>`);
+        const markup = [parts.join('   '), fans.join('   ')].filter(s => s).join('   ·   ') || '—';
+        this._tempItem.label.clutter_text.set_markup(`<span foreground="${DIM}">${markup}</span>`);
 
         this.menu.setHeader(this.iconName, 'PhanSpeed', sub);
     }

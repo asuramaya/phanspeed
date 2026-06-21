@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] — 2026-06-21
+
+### Added
+- **Power-clamp detection.** The daemon reads per-core frequency + CPU busy%
+  (`/proc/stat`) and flags a hardware **power/PROCHOT clamp** — when the top core
+  is pinned near the frequency floor under real load with ample thermal headroom
+  (classic cause: a USB-C device drawing power, an underpowered charger, or a
+  battery limit, *not* heat). Surfaced as `cpu_clamp` in status, a ⚠ banner in the
+  pill, and on the tile subtitle. `--selftest` prints the live freq range.
+
+### Changed
+- **Pill UX polish toward the concept mockup**: profiles are now a **horizontal
+  chip row** (active chip filled) instead of a vertical list; the live readout is
+  **colour-coded** (green/amber/red temps, accent RPM) via Pango markup; submenus
+  moved into stable sections. metadata version 9→10.
+- `phanspeed.service`: dropped `ProcSubset=pid` (it hid `/proc/stat`, needed for
+  clamp detection); other processes stay hidden via `ProtectProc=invisible`.
+
 ## [0.13.0] — 2026-06-19
 
 ### Added

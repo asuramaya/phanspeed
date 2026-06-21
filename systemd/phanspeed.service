@@ -33,7 +33,9 @@ ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectHostname=yes
 ProtectProc=invisible
-ProcSubset=pid
+# NOTE: ProcSubset=pid is intentionally NOT set — it hides /proc/stat, which the
+# daemon reads (CPU busy%) to detect a power/PROCHOT frequency clamp. Other
+# processes stay hidden via ProtectProc=invisible.
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
