@@ -37,12 +37,29 @@ const EPP_SHORT = {
 };
 const DEFAULT_ICON = 'power-profile-balanced-symbolic';
 
+// The three missions — the gestalt of the app. Each fights one of the things
+// that cripple a laptop and re-skins the pill's hero readout to its own metric.
+const MISSIONS = ['cool', 'perf', 'endure'];
+const MISSION_LABEL = {cool: '🧊 Cool', perf: '🔥 Perf', endure: '🔋 Endure'};
+const MISSION_ICON = {
+    cool: 'power-profile-power-saver-symbolic',
+    perf: 'power-profile-performance-symbolic',
+    endure: 'battery-symbolic',
+};
+const INTENSITY_MAX = 4;
+
 // concept palette
 const ACCENT = '#b9acff';
 const DIM = '#9aa0a6';
+const GOOD = '#4caf50';
+const WARN = '#ffbb33';
 const CHIP = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#dedde6;'
     + ' background-color:rgba(255,255,255,0.07);';
 const CHIP_ON = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#ffffff;'
+    + ' font-weight:bold; background-color:#5b50a8;';
+const DOT = 'border-radius:9px; padding:2px 0; margin:0 3px; color:#9aa0a6;'
+    + ' background-color:rgba(255,255,255,0.05);';
+const DOT_ON = 'border-radius:9px; padding:2px 0; margin:0 3px; color:#ffffff;'
     + ' font-weight:bold; background-color:#5b50a8;';
 
 function isObj(v) {
@@ -62,6 +79,27 @@ function tColor(t) {
 }
 function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+function fmtMin(rem) {
+    if (rem == null)
+        return '';
+    const h = Math.floor(rem / 60), m = Math.round(rem % 60);
+    return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+// The Endure mission's break-even gauge: "+2W ▲ 11h" (holding) / "−8W ▼ 1h12m".
+function balanceMarkup(bal) {
+    const bw = num(bal && bal.battery_w);
+    if (bw == null)
+        return null;
+    const up = bw >= 0;
+    const arrow = up ? '▲' : '▼';
+    const sign = bw > 0 ? '+' : (bw < 0 ? '−' : '');
+    let s = `<span foreground="${up ? GOOD : WARN}" font_weight="bold">`
+        + `${sign}${Math.abs(bw)}W ${arrow}</span>`;
+    const rem = fmtMin(num(bal.remaining_min));
+    if (rem)
+        s += ` <span foreground="${DIM}">${up ? 'to full ' : ''}${rem}</span>`;
+    return s;
 }
 
 function readStatus() {
@@ -113,7 +151,17 @@ class PhanToggle extends QuickMenuToggle {
         super._init({title: 'PhanSpeed', iconName: DEFAULT_ICON, toggleMode: true});
         this.menu.setHeader(DEFAULT_ICON, 'PhanSpeed', 'Thermal control');
 
-        // profile chips (horizontal row)
+        // mission chips (the primary, top-layer control) + intensity dots
+        this._missionItems = {};
+        this._missionSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._missionSection);
+        this._buildMissions();
+        this._intensityItems = [];
+        this._intensitySection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._intensitySection);
+        this._buildIntensity();
+
+        // profile chips (secondary layer — picking one exits mission mode)
         this._profileItems = {};
         this._profileSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._profileSection);
@@ -155,9 +203,9 @@ class PhanToggle extends QuickMenuToggle {
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._tempItem);
 
-        // clicking the pill body toggles Auto on/off
+        // clicking the pill body toggles Auto on/off (and exits any mission)
         this.connect('clicked', () => {
-            sendCmd({cmd: 'set', mode: this.checked ? 'auto' : 'manual'});
+            sendCmd({cmd: 'set', mission: '', mode: this.checked ? 'auto' : 'manual'});
             this._scheduleRefresh();
         });
         this._built = false;
@@ -174,7 +222,8 @@ class PhanToggle extends QuickMenuToggle {
                 x_expand: true, can_focus: true, style: CHIP,
             });
             btn.connect('clicked', () => {
-                sendCmd({cmd: 'set', mode: 'manual', manual_profile: name});
+                // picking a raw profile exits mission mode (legacy control)
+                sendCmd({cmd: 'set', mission: '', mode: 'manual', manual_profile: name});
                 this._scheduleRefresh();
             });
             box.add_child(btn);
@@ -183,6 +232,49 @@ class PhanToggle extends QuickMenuToggle {
         row.add_child(box);
         this._profileSection.addMenuItem(row);
         this._built = true;
+    }
+
+    _buildMissions() {
+        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const box = new St.BoxLayout({x_expand: true});
+        for (const m of MISSIONS) {
+            const btn = new St.Button({
+                label: MISSION_LABEL[m], x_expand: true, can_focus: true, style: CHIP,
+            });
+            btn.connect('clicked', () => {
+                // toggle: clicking the active mission drops back to legacy control
+                const off = this._activeMission === m;
+                sendCmd({cmd: 'set', mission: off ? '' : m});
+                this._scheduleRefresh();
+            });
+            box.add_child(btn);
+            this._missionItems[m] = btn;
+        }
+        row.add_child(box);
+        this._missionSection.addMenuItem(row);
+    }
+
+    _buildIntensity() {
+        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const box = new St.BoxLayout({x_expand: true});
+        const lab = new St.Label({text: 'intensity', style: `color:${DIM}; padding-right:8px;`});
+        lab.y_align = 2;     // Clutter.ActorAlign.CENTER
+        box.add_child(lab);
+        this._intensityItems = [];
+        for (let i = 0; i <= INTENSITY_MAX; i++) {
+            const btn = new St.Button({
+                label: String(i), x_expand: true, can_focus: true, style: DOT,
+            });
+            btn.connect('clicked', () => {
+                sendCmd({cmd: 'set', intensity: i});
+                this._scheduleRefresh();
+            });
+            box.add_child(btn);
+            this._intensityItems.push(btn);
+        }
+        row.add_child(box);
+        this._intensitySection.addMenuItem(row);
+        this._intensityRow = row;
     }
 
     _buildPower(power) {
@@ -313,28 +405,57 @@ class PhanToggle extends QuickMenuToggle {
         const cpu = num(temps['coretemp:Package id 0'] ?? temps['dell_ddv:CPU']);
         const gpuTemp = num(gpuInfo.temp) ?? num(temps['dell_ddv:Video']);
         const lbl = PROFILE_LABEL[profile] || profile || '—';
+        const mission = (typeof st.mission === 'string' && MISSIONS.includes(st.mission))
+            ? st.mission : '';
+        const intensity = num(st.intensity) ?? 2;
+        const bal = isObj(st.power_balance) ? st.power_balance : {};
+        this._activeMission = mission;
 
         this.iconName = (st.emergency || clamp.clamped)
             ? 'power-profile-performance-symbolic'
-            : (PROFILE_ICON[profile] || DEFAULT_ICON);
-        this.checked = auto;
+            : (mission ? MISSION_ICON[mission] : (PROFILE_ICON[profile] || DEFAULT_ICON));
+        this.checked = auto || mission !== '';
         this._batteryItem.setToggleState(batteryAware);
 
-        // subtitle (shown on the tile): clamp/emergency take priority
-        let sub = auto ? `Auto · ${lbl}` : lbl;
-        if (onBattery && batteryAware)
-            sub = `🔋 ${lbl}`;
-        if (cpu != null)
-            sub += ` · ${Math.round(cpu)}°`;
+        // subtitle (shown on the tile): the active mission re-skins it to its
+        // own hero metric; clamp/emergency always win.
+        let sub;
+        if (mission === 'endure') {
+            const bm = num(bal.battery_w);
+            sub = bm != null
+                ? `🔋 ${bm >= 0 ? '+' : '−'}${Math.abs(bm)}W ${bm >= 0 ? '▲' : '▼'}`
+                    + (bal.remaining_min != null ? ` ${fmtMin(bal.remaining_min)}` : '')
+                : '🔋 Endure';
+        } else if (mission === 'perf') {
+            const w = num(power.current_w);
+            sub = `🔥 Perf${w != null ? ` · ${w}W` : ''}`
+                + (cpu != null ? ` · ${Math.round(cpu)}°` : '');
+        } else if (mission === 'cool') {
+            sub = `🧊 Cool${cpu != null ? ` · ${Math.round(cpu)}°` : ''}`;
+        } else {
+            sub = auto ? `Auto · ${lbl}` : lbl;
+            if (onBattery && batteryAware)
+                sub = `🔋 ${lbl}`;
+            if (cpu != null)
+                sub += ` · ${Math.round(cpu)}°`;
+        }
         if (clamp.clamped)
             sub = `⚠ Clamped · ${clamp.cur_max_mhz} MHz`;
         if (st.emergency)
             sub = `⚠ Emergency · ${Math.round(cpu ?? 0)}°`;
         this.subtitle = sub;
 
-        // profile chips: highlight the active one
+        // mission chips: highlight active; intensity dots only while in a mission
+        for (const m of MISSIONS)
+            this._missionItems[m]?.set_style(m === mission ? CHIP_ON : CHIP);
+        if (this._intensityRow)
+            this._intensityRow.visible = mission !== '';
+        this._intensityItems.forEach((b, i) =>
+            b.set_style(i === intensity ? DOT_ON : DOT));
+
+        // profile chips: highlight the active one (only meaningful with no mission)
         for (const [name, btn] of Object.entries(this._profileItems))
-            btn.set_style(name === profile ? CHIP_ON : CHIP);
+            btn.set_style(!mission && name === profile ? CHIP_ON : CHIP);
 
         // clamp banner
         if (clamp.clamped) {
@@ -386,8 +507,38 @@ class PhanToggle extends QuickMenuToggle {
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
 
-        // adaptive scene readout (AC vs battery)
-        if (power.available) {
+        // headline readout — re-skinned to the active mission's hero metric
+        if (mission === 'endure') {
+            const bm = balanceMarkup(bal);
+            const inw = num(bal.in_w), draw = num(bal.draw_w);
+            const dgpu = typeof gpuInfo.runtime_status === 'string'
+                ? gpuInfo.runtime_status : null;
+            const extra = [];
+            if (inw != null)
+                extra.push(`in ${inw}W`);
+            if (draw != null)
+                extra.push(`draw ${draw}W`);
+            if (dgpu)
+                extra.push(`dGPU ${dgpu === 'suspended' ? 'asleep' : dgpu}`);
+            this._sceneItem.label.clutter_text.set_markup(
+                (bm || `<span foreground="${DIM}">🔋 measuring…</span>`)
+                + (extra.length
+                    ? `   <span foreground="${DIM}">${esc(extra.join(' · '))}</span>` : ''));
+        } else if (mission === 'perf') {
+            const w = num(power.current_w);
+            const mhz = num(clamp.cur_max_mhz);
+            const bits = [];
+            if (mhz)
+                bits.push(`<span foreground="${ACCENT}" font_weight="bold">${(mhz / 1000).toFixed(1)} GHz</span>`);
+            if (w != null)
+                bits.push(`<span foreground="${ACCENT}">${w} W</span>`);
+            this._sceneItem.label.clutter_text.set_markup(bits.join('     ') || '🔥 Perf');
+        } else if (mission === 'cool') {
+            const w = num(power.current_w);
+            this._sceneItem.label.clutter_text.set_markup(
+                `<span foreground="${ACCENT}">🧊 ${w != null ? `${w} W cap` : 'cooling'}</span>`);
+        } else if (power.available) {
+            // legacy: adaptive scene readout (AC vs battery)
             const eppAvail = pref.epp_available === true;
             const acCapN = num(power.limit_w) || 0;
             const bCapN = num(power.battery_w) || 0;

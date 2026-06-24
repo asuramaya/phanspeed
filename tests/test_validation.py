@@ -52,6 +52,12 @@ def check(cfg, where):
         assert cfg["turbo"] in ("auto", "on", "off"), "bad turbo"
         for ek in ("epp", "battery_epp"):
             assert cfg[ek] == "" or cfg[ek] in m.VALID_EPP, f"bad {ek}"
+        assert cfg["mission"] in ("", "cool", "perf", "endure"), "bad mission"
+        iv = cfg["intensity"]
+        assert isinstance(iv, int) and not isinstance(iv, bool), "intensity type"
+        assert 0 <= iv <= m.INTENSITY_MAX, "intensity range"
+        for bk in ("endure_gpu_sleep", "endure_trim"):
+            assert isinstance(cfg[bk], bool), f"{bk} type"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
     except AssertionError as e:
         fails.append(f"[{where}] {e}")
@@ -79,6 +85,10 @@ HOSTILE = [
     {"turbo": "maybe", "epp": "turbocharged"},
     {"turbo": 1, "epp": ["performance"], "battery_epp": 7},
     {"battery_epp": "fast"},
+    {"mission": "ascend", "intensity": 99},
+    {"mission": ["endure"], "intensity": "max"},
+    {"mission": "endure", "intensity": -3, "endure_gpu_sleep": "yes"},
+    {"endure_trim": 1, "endure_gpu_sleep": None},
 ]
 for h in HOSTILE:
     cfg = m.sanitize_config(dict(m.DEFAULTS, **h), CHOICES, SENSORS)
@@ -89,7 +99,7 @@ random.seed(7)
 KEYS = list(m.DEFAULTS)
 VALS = [None, True, False, -1e9, 1e9, "x", "auto", "cool", [], {}, 0, 8, 95,
         9999, float("nan"), float("inf"), -50, 3.5, "on", "off", "performance",
-        "balance_power", ""]
+        "balance_power", "", "endure", "perf", 2, 4]
 for _ in range(8000):
     bad = {}
     for k in random.sample(KEYS, random.randint(1, 6)):
@@ -107,6 +117,11 @@ assert cfg["manual_profile"] == "cool" and cfg["power_limit_w"] == 35
 assert cfg["gpu_power_limit_w"] == 40 and cfg["battery_aware"] is True
 assert cfg["turbo"] == "off" and cfg["epp"] == "performance"
 assert cfg["battery_epp"] == "balance_power"
+cfg = m.sanitize_config(dict(m.DEFAULTS, mission="endure", intensity=4,
+                             endure_gpu_sleep=False, endure_trim=True),
+                        CHOICES, SENSORS)
+assert cfg["mission"] == "endure" and cfg["intensity"] == 4
+assert cfg["endure_gpu_sleep"] is False and cfg["endure_trim"] is True
 print("legit values preserved OK")
 
 if fails:

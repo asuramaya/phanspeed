@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="380" height="396" viewBox="0 0 380 396" xmlns="http://www.w3.org/2000/svg"
+<svg width="380" height="400" viewBox="0 0 380 400" xmlns="http://www.w3.org/2000/svg"
      font-family="Cantarell, 'Segoe UI', sans-serif">
   <defs>
     <style>
       .panel { fill:#242428; }
       .tile  { fill:#37373d; }
+      .dot   { fill:#2f2f35; }
       .on    { fill:#5b50a8; }
       .accent{ fill:#b9acff; }
       .txt   { fill:#ffffff; }
@@ -14,65 +15,73 @@
     </style>
   </defs>
 
-  <rect width="380" height="396" rx="20" class="panel"/>
+  <rect width="380" height="400" rx="20" class="panel"/>
 
   <!-- header -->
   <circle cx="40" cy="44" r="18" class="on"/>
-  <text x="40" y="49" class="accent" font-size="18" text-anchor="middle">❄</text>
+  <text x="40" y="50" class="accent" font-size="16" text-anchor="middle">🔋</text>
   <text x="70" y="40" class="txt" font-size="15" font-weight="600">PhanSpeed</text>
-  <text x="70" y="58" class="dim" font-size="12">Auto · Cool · 64°</text>
-  <rect x="300" y="30" width="52" height="28" rx="14" class="on"/>
-  <text x="326" y="48" class="txt" font-size="11" text-anchor="middle">Auto</text>
+  <text x="70" y="58" class="dim" font-size="12">🔋 −8W ▼ 1h12m</text>
+  <rect x="306" y="30" width="46" height="28" rx="14" class="on"/>
+  <text x="329" y="48" class="txt" font-size="11" text-anchor="middle">On</text>
 
-  <!-- profile pills -->
-  <g font-size="12" text-anchor="middle">
-    <rect x="20"  y="78" width="80" height="34" rx="17" class="tile"/>
-    <text x="60"  y="100" class="txt">Quiet</text>
-    <rect x="108" y="78" width="80" height="34" rx="17" class="tile"/>
-    <text x="148" y="100" class="txt">Balanced</text>
-    <rect x="196" y="78" width="80" height="34" rx="17" class="on"/>
-    <text x="236" y="100" class="txt" font-weight="600">Cool</text>
-    <rect x="284" y="78" width="76" height="34" rx="17" class="tile"/>
-    <text x="322" y="100" class="txt">Perf</text>
+  <!-- mission chips (top layer) -->
+  <g font-size="13" text-anchor="middle">
+    <rect x="20"  y="76" width="108" height="34" rx="17" class="tile"/>
+    <text x="74"  y="98" class="txt">🧊 Cool</text>
+    <rect x="136" y="76" width="108" height="34" rx="17" class="tile"/>
+    <text x="190" y="98" class="txt">🔥 Perf</text>
+    <rect x="252" y="76" width="108" height="34" rx="17" class="on"/>
+    <text x="306" y="98" class="txt" font-weight="700">🔋 Endure</text>
   </g>
+
+  <!-- intensity dial (second layer) -->
+  <g font-size="12" text-anchor="middle">
+    <text x="24" y="142" class="dim" text-anchor="start">intensity</text>
+    <rect x="150" y="126" width="34" height="22" rx="11" class="dot"/>
+    <text x="167" y="142" class="dim">0</text>
+    <rect x="192" y="126" width="34" height="22" rx="11" class="dot"/>
+    <text x="209" y="142" class="dim">1</text>
+    <rect x="234" y="126" width="34" height="22" rx="11" class="dot"/>
+    <text x="251" y="142" class="dim">2</text>
+    <rect x="276" y="126" width="34" height="22" rx="11" class="dot"/>
+    <text x="293" y="142" class="dim">3</text>
+    <rect x="318" y="126" width="34" height="22" rx="11" class="on"/>
+    <text x="335" y="142" class="txt" font-weight="700">4</text>
+  </g>
+
+  <!-- break-even gauge (Endure's hero readout) -->
+  <text x="24" y="188" class="amb" font-size="22" font-weight="700">−8W ▼</text>
+  <text x="138" y="188" class="dim" font-size="14">1h 12m left</text>
+  <text x="24" y="212" class="dim" font-size="12">in 15 W · draw 23 W · dGPU asleep</text>
+
+  <line x1="20" y1="232" x2="360" y2="232" stroke="#37373d"/>
 
   <!-- rows -->
   <g font-size="13">
-    <text x="24" y="146" class="dim" font-size="13">🔋</text>
-    <text x="46" y="146" class="txt">CPU power: auto · 45 W</text>
-    <text x="356" y="146" class="dim" font-size="11" text-anchor="end">›</text>
-
-    <line x1="20" y1="164" x2="360" y2="164" stroke="#37373d"/>
-
-    <text x="46" y="190" class="txt">GPU power: 60 W · 14 W draw</text>
-    <text x="356" y="190" class="dim" font-size="11" text-anchor="end">›</text>
-
-    <line x1="20" y1="208" x2="360" y2="208" stroke="#37373d"/>
-
-    <text x="46" y="234" class="txt">Quiet on battery</text>
-    <rect x="312" y="222" width="44" height="22" rx="11" class="tile"/>
-    <circle cx="323" cy="233" r="8" fill="#9aa0a6"/>
+    <text x="24" y="262" class="txt">CPU power: 12 W  (closed-loop → break-even)</text>
+    <text x="356" y="262" class="dim" font-size="11" text-anchor="end">›</text>
   </g>
 
-  <line x1="20" y1="256" x2="360" y2="256" stroke="#37373d"/>
+  <line x1="20" y1="282" x2="360" y2="282" stroke="#37373d"/>
 
   <!-- live readout -->
   <g font-size="13">
-    <text x="24" y="286" class="dim">CPU</text>
-    <text x="58" y="286" class="amb" font-weight="700">64°</text>
-    <text x="98" y="286" class="dim">GPU</text>
-    <text x="132" y="286" class="grn" font-weight="700">55°</text>
-    <text x="186" y="286" class="dim">·</text>
-    <text x="204" y="286" class="dim">CPU Fan</text>
-    <text x="264" y="286" class="accent" font-weight="600">2400</text>
-    <text x="306" y="286" class="dim">Video</text>
-    <text x="346" y="286" class="accent" font-weight="600">2800</text>
+    <text x="24" y="312" class="dim">CPU</text>
+    <text x="58" y="312" class="grn" font-weight="700">47°</text>
+    <text x="98" y="312" class="dim">GPU</text>
+    <text x="132" y="312" class="dim" font-weight="600">asleep</text>
+    <text x="198" y="312" class="dim">·</text>
+    <text x="214" y="312" class="dim">CPU Fan</text>
+    <text x="274" y="312" class="accent" font-weight="600">1800</text>
+    <text x="316" y="312" class="dim">Video</text>
+    <text x="356" y="312" class="dim" font-weight="600" text-anchor="end">off</text>
   </g>
 
-  <text x="190" y="334" class="dim" font-size="11" text-anchor="middle">
+  <text x="190" y="356" class="dim" font-size="11" text-anchor="middle">
     Quick Settings pill — next to Wi-Fi &amp; Bluetooth
   </text>
-  <text x="190" y="360" class="dim" font-size="10" text-anchor="middle" opacity="0.7">
-    (mockup; see README for capturing a live recording)
+  <text x="190" y="380" class="dim" font-size="10" text-anchor="middle" opacity="0.7">
+    (mockup; Endure mission on a 20 W trickle)
   </text>
 </svg>

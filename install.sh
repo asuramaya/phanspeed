@@ -81,7 +81,11 @@ if [[ ! -f /etc/phanspeed/config.json ]]; then
   "epp": "",
   "battery_epp": "",
   "gpu_power_limit_w": 0,
-  "gpu_persistence": false
+  "gpu_persistence": false,
+  "mission": "",
+  "intensity": 2,
+  "endure_gpu_sleep": true,
+  "endure_trim": true
 }
 JSON
 fi

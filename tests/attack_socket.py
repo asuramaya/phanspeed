@@ -90,6 +90,11 @@ HOSTILE = [
     {"cmd": "set", "epp": "turbocharged"},      # not a real EPP -> rejected
     {"cmd": "set", "epp": ["performance"]},     # list -> rejected
     {"cmd": "set", "battery_epp": "zoom"},      # bad battery EPP -> rejected
+    {"cmd": "set", "mission": "ascend"},        # bad mission -> rejected
+    {"cmd": "set", "mission": ["endure"]},      # list -> rejected
+    {"cmd": "set", "intensity": 99},            # out of range -> clamp
+    {"cmd": "set", "intensity": "max"},         # wrong type -> rejected
+    {"cmd": "set", "endure_gpu_sleep": "yes"},  # non-bool -> rejected
     {"cmd": "wat"}, {"cmd": 123}, {}, {"cmd": "get"},
 ]
 for msg in HOSTILE:
@@ -105,9 +110,11 @@ KEYS = ["mode", "manual_profile", "sensor", "quiet_below", "cool_above",
         "hysteresis", "emergency_temp", "emergency_clear_temp", "allow_uids",
         "rate_limit", "power_limit_w", "power_floor_w", "battery_power_w",
         "power_auto", "battery_aware", "battery_profile", "gpu_power_limit_w",
-        "turbo", "epp", "battery_epp"]
+        "turbo", "epp", "battery_epp", "mission", "intensity",
+        "endure_gpu_sleep", "endure_trim"]
 VALS = [None, True, -1e9, 1e9, "x", [], {}, 0, 95, 9999, float("nan"), "auto",
-        "cool", "on", "off", "performance", "balance_power", ""]
+        "cool", "on", "off", "performance", "balance_power", "", "endure",
+        "perf", 2, 4]
 for _ in range(3000):
     msg = {"cmd": random.choice(["set", "get", "x"])}
     for k in random.sample(KEYS, random.randint(0, 4)):

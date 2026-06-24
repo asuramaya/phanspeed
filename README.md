@@ -33,10 +33,27 @@ is the ACPI **platform_profile**: `cool · quiet · balanced · performance`.
 drives that, with a temperature auto-policy on top (the closest thing to a fan
 curve the hardware allows).
 
+## Three missions
+
+PhanSpeed is one governor fighting the three things that cripple a laptop — you
+pick which fight it's in, and the pill re-skins to that mission's metric:
+
+- 🧊 **Cool** — *survive heat*: cap watts at the source. (Born from a dead fan.)
+- 🔥 **Perf** — *unleash*: take everything the chassis allows. (Born from fixed fans.)
+- 🔋 **Endure** — *survive power*: minimise draw to **live on a power trickle** —
+  closed-loop CPU cap to **break-even**, dGPU sleep, panel/kbd trims, with a live
+  `+2W ▲ / −8W ▼` balance gauge. (Born from a 20 W charger.)
+
+`phanspeed survive` / `phanspeed mission <cool|perf|endure>` + `phanspeed
+intensity <0-4>`, or the mission chips in the pill. Full design:
+[docs/MISSIONS.md](docs/MISSIONS.md).
+
 ## What you get
 
 A Quick Settings pill that:
-- Shows the active profile + CPU temp at a glance (icon changes with profile).
+- A **mission chip row** (🧊 Cool · 🔥 Perf · 🔋 Endure) + an **intensity dial**;
+  the headline re-skins to temp / clock-watts / break-even per mission.
+- Shows the active profile + CPU temp at a glance (icon changes with mission/profile).
 - **Click the pill** → toggle *Auto by temperature* on/off.
 - **Open the menu** → pick a profile manually (Quiet/Balanced/Cool/Performance),
   set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat) or

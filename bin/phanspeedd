@@ -70,6 +70,24 @@ LEVEL_NAMES = {
 }
 RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
 
+# Missions — the three stances PhanSpeed takes against the three things that
+# cripple a laptop. Each redefines the control objective:
+#   cool    — survive heat: cap watts at the source, quiet/cool fans.
+#   perf    — unleash: full power, performance EPP, turbo where allowed.
+#   endure  — survive power: minimise total draw to live on a trickle. Closed-
+#             loop CPU cap hunts toward break-even (net battery drain <= 0),
+#             suspends the dGPU, and (high intensity) dims the panel + kbd.
+# `intensity` (0..4) is how hard you lean into the active mission's objective.
+MISSIONS = ("cool", "perf", "endure")
+INTENSITY_MAX = 4
+
+# Endure extra levers: discrete-GPU runtime PM + panel/keyboard trims.
+PCI_DEVICES = "/sys/bus/pci/devices"
+NVIDIA_VENDOR = "0x10de"
+BACKLIGHT_GLOB = "/sys/class/backlight/*"
+KBD_LED_GLOB = "/sys/class/leds/*kbd_backlight*"
+ENDURE_DIM_FRAC = 0.30          # panel brightness while "at all costs" trims run
+
 DEFAULTS = {
     "poll_interval": 3.0,
     "mode": "auto",                 # auto | manual
@@ -93,6 +111,10 @@ DEFAULTS = {
     "battery_epp": "",              # EPP on battery; "" = balance_power fallback
     "gpu_power_limit_w": 0,         # NVIDIA GPU power cap in W; 0 = unmanaged
     "gpu_persistence": False,       # nvidia-smi -pm 1 (keeps driver loaded; desktops)
+    "mission": "",                  # "" = legacy (mode/profile) | cool | perf | endure
+    "intensity": 2,                 # 0..4 — lean within the active mission
+    "endure_gpu_sleep": True,       # Endure: let the dGPU runtime-suspend (big win)
+    "endure_trim": True,            # Endure "at all costs": dim panel + kbd off
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -164,6 +186,12 @@ def sanitize_config(cfg, choices, sensors):
         ev = cfg.get(ek)
         if not (isinstance(ev, str) and (ev == "" or ev in VALID_EPP)):
             cfg[ek] = ""
+    if cfg.get("mission") not in ("",) + MISSIONS:
+        cfg["mission"] = ""
+    iv = _coerce_num(cfg.get("intensity"), 0, INTENSITY_MAX)
+    cfg["intensity"] = int(iv) if iv is not None else DEFAULTS["intensity"]
+    for bk in ("endure_gpu_sleep", "endure_trim"):
+        cfg[bk] = bool(cfg.get(bk)) if isinstance(cfg.get(bk), bool) else DEFAULTS[bk]
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -239,6 +267,7 @@ class Hardware:
         self._discover_rapl()
         self._discover_cpu_pref()
         self._discover_cpufreq()
+        self._discover_display()
         self.gpu = Gpu()
 
     # ---- RAPL CPU power limit (PL1) ---- #
@@ -324,6 +353,47 @@ class Hardware:
         fmin = _read_int(self._freq_min_path) or 0
         fmax = _read_int(self._freq_max_path) or 0
         return (max(cur) // 1000, fmin // 1000, fmax // 1000)
+
+    # ---- panel + keyboard backlight (Endure "at all costs" trims) ---- #
+    def _discover_display(self):
+        self.backlight = None        # (brightness_path, max) of the panel
+        for d in sorted(glob.glob(BACKLIGHT_GLOB)):
+            bp = os.path.join(d, "brightness")
+            mx = _read_int(os.path.join(d, "max_brightness"))
+            if os.access(bp, os.W_OK) and mx:
+                self.backlight = (bp, mx)
+                break
+        self.kbd_leds = [os.path.join(d, "brightness")
+                         for d in sorted(set(glob.glob(KBD_LED_GLOB)))
+                         if os.access(os.path.join(d, "brightness"), os.W_OK)]
+        self._trim_saved = None      # (panel_brightness, {kbd_path: brightness})
+
+    def dim(self, frac=ENDURE_DIM_FRAC):
+        """Drop panel + keyboard backlight, remembering the prior levels once."""
+        if self._trim_saved is None:
+            saved_panel = self.backlight and _read_int(self.backlight[0])
+            saved_kbd = {p: _read_int(p) for p in self.kbd_leds}
+            self._trim_saved = (saved_panel, saved_kbd)
+        if self.backlight:
+            bp, mx = self.backlight
+            cur = _read_int(bp)
+            target = max(1, int(mx * frac))
+            if cur is None or cur > target:     # only ever dim, never brighten
+                _write(bp, target)
+        for p in self.kbd_leds:
+            _write(p, 0)
+
+    def undim(self):
+        """Restore the panel + keyboard backlight saved by the first dim()."""
+        if self._trim_saved is None:
+            return
+        panel, kbd = self._trim_saved
+        if self.backlight and panel is not None:
+            _write(self.backlight[0], panel)
+        for p, v in kbd.items():
+            if v is not None:
+                _write(p, v)
+        self._trim_saved = None
 
     @property
     def has_turbo(self):
@@ -441,6 +511,7 @@ class Gpu:
         self.min_w = self.max_w = self.default_w = None
         self._cache = None
         self._cache_t = 0.0
+        self._discover_pci()
         if not NVIDIA_SMI:
             return
         info = self.query(max_age=0)
@@ -450,6 +521,56 @@ class Gpu:
             self.min_w = info.get("min")
             self.max_w = info.get("max")
             self.default_w = info.get("default")
+
+    # ---- runtime power management (let the dGPU drop to D3cold when idle) ---- #
+    def _discover_pci(self):
+        """Find the NVIDIA PCI function(s) so we can drive runtime PM directly —
+        this works even where nvidia-smi -pl is firmware-locked, and it's the
+        single biggest idle-power lever on an Optimus laptop (the dGPU otherwise
+        burns several watts at 0% util). Note: nvidia-persistenced, if running,
+        pins the GPU on and defeats this — Endure still sets control=auto."""
+        self.pci_control = []        # writable .../power/control paths
+        self._pci_saved = {}         # original control values, for restore
+        try:
+            devs = sorted(glob.glob(os.path.join(PCI_DEVICES, "*")))
+        except OSError:
+            devs = []
+        for d in devs:
+            if _read(os.path.join(d, "vendor")) != NVIDIA_VENDOR:
+                continue
+            cls = _read(os.path.join(d, "class")) or ""
+            if not cls.startswith("0x03"):     # display controller only
+                continue
+            ctl = os.path.join(d, "power", "control")
+            if os.access(ctl, os.W_OK):
+                self.pci_control.append(ctl)
+
+    @property
+    def has_runtime_pm(self):
+        return bool(self.pci_control)
+
+    def runtime_status(self):
+        """'suspended' / 'active' for the dGPU (first function), or None."""
+        if not self.pci_control:
+            return None
+        return _read(os.path.join(os.path.dirname(
+            os.path.dirname(self.pci_control[0])), "power", "runtime_status"))
+
+    def set_runtime_pm(self, allow):
+        """allow=True -> 'auto' (may suspend when idle); False -> restore prior."""
+        if not self.pci_control:
+            return False
+        ok = True
+        for ctl in self.pci_control:
+            if allow:
+                self._pci_saved.setdefault(ctl, _read(ctl))
+                if _read(ctl) != "auto":
+                    ok = _write(ctl, "auto") and ok
+            else:
+                prev = self._pci_saved.pop(ctl, None)
+                if prev and _read(ctl) != prev:
+                    ok = _write(ctl, prev) and ok
+        return ok
 
     def _run(self, args, timeout):
         try:
@@ -541,6 +662,12 @@ class Daemon:
         self._epp_dirty = False         # have we changed the EPP preference?
         self._stat_prev = None          # last /proc/stat (idle, total) for busy%
         self._busy_pct = None           # CPU busy% over the last poll
+        self._bat_prev = None           # last (charge_uah, monotonic_t) for drain calc
+        self._bat_w = None              # smoothed net battery power (+ charging)
+        self._balance = None            # last computed power_balance() snapshot
+        self._endure_cap = None         # current closed-loop Endure CPU cap (W)
+        self._trim_dirty = False        # have we dimmed the panel/kbd?
+        self._gpu_pm_dirty = False      # have we forced dGPU runtime PM to auto?
         log(f"profiles available: {self.hw.choices}")
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
@@ -643,8 +770,100 @@ class Daemon:
                              "underpowered charger, or a battery limit")
         return out
 
+    def _bat_dir(self):
+        """A '+1/-1/0' charge direction for the battery, from its status."""
+        for d in glob.glob("/sys/class/power_supply/*"):
+            if _read(os.path.join(d, "type")) != "Battery":
+                continue
+            st = _read(os.path.join(d, "status"))
+            return 1 if st == "Charging" else (-1 if st == "Discharging" else 0), d
+        return 0, None
+
+    def power_balance(self):
+        """The Endure mission's instrument: watts in from the charger, net
+        battery power (+ charging / − draining), total system draw, and a
+        runtime estimate. Call once per loop — it samples the charge gauge over
+        time, so repeated calls within a poll would skew the delta."""
+        # --- input from any online source (USB-C PD / barrel / Mains) ---
+        power_in, have_in = 0.0, False
+        for d in glob.glob("/sys/class/power_supply/*"):
+            if _read(os.path.join(d, "type")) == "Battery":
+                continue
+            if _read_int(os.path.join(d, "online")) != 1:
+                continue
+            pw = _read_int(os.path.join(d, "power_now"))
+            if pw is not None:
+                power_in += pw / 1e6
+                have_in = True
+                continue
+            cur = _read_int(os.path.join(d, "current_now"))
+            volt = _read_int(os.path.join(d, "voltage_now"))
+            if cur and volt:
+                power_in += (cur / 1e6) * (volt / 1e6)
+                have_in = True
+        # --- battery: net power, signed (+ charging, − draining) ---
+        bat_w = remaining_min = None
+        sign, bd = self._bat_dir()
+        status = None
+        if bd:
+            status = _read(os.path.join(bd, "status"))
+            volt = _read_int(os.path.join(bd, "voltage_now")) or 0
+            mag = None
+            pw = _read_int(os.path.join(bd, "power_now"))
+            if pw is not None:
+                mag = pw / 1e6
+            else:
+                cur = _read_int(os.path.join(bd, "current_now"))
+                if cur is not None and volt:
+                    mag = (cur / 1e6) * (volt / 1e6)
+            charge = _read_int(os.path.join(bd, "charge_now"))
+            now = time.monotonic()
+            if mag is not None:
+                bat_w = round(sign * mag, 1)
+            elif charge is not None and volt:
+                # charge-only gauge (this Dell): derive rate from charge delta.
+                prev = self._bat_prev
+                if prev and now - prev[1] >= 1.0:
+                    d_uah = charge - prev[0]
+                    dt_h = (now - prev[1]) / 3600.0
+                    if dt_h:
+                        amps = (d_uah / 1e6) / dt_h
+                        bat_w = round(abs(amps) * (volt / 1e6)
+                                      * (1 if d_uah > 0 else -1), 1)
+                self._bat_prev = (charge, now)
+            # runtime estimate
+            energy = _read_int(os.path.join(bd, "energy_now"))
+            if energy is None and charge is not None and volt:
+                energy = int(charge * volt / 1e6)        # uAh*uV/1e6 ≈ uWh
+            if bat_w and energy:
+                wh = energy / 1e6
+                if bat_w < 0:
+                    remaining_min = round(wh / abs(bat_w) * 60)
+                else:
+                    ef = _read_int(os.path.join(bd, "energy_full"))
+                    if ef is None:
+                        cf = _read_int(os.path.join(bd, "charge_full"))
+                        ef = int(cf * volt / 1e6) if cf and volt else None
+                    if ef:
+                        remaining_min = round(max(0, (ef - energy) / 1e6) / bat_w * 60)
+        if bat_w is not None:
+            self._bat_w = bat_w if self._bat_w is None else round(
+                0.6 * self._bat_w + 0.4 * bat_w, 1)
+        draw = (round(power_in - self._bat_w, 1)
+                if have_in and self._bat_w is not None else None)
+        self._balance = {
+            "in_w": round(power_in, 1) if have_in else None,
+            "battery_w": self._bat_w,
+            "draw_w": draw,
+            "remaining_min": remaining_min,
+            "status": status,
+            "breakeven": self._bat_w is not None and self._bat_w >= 0,
+        }
+        return self._balance
+
     def apply_once(self):
         self._sample_busy()
+        self.power_balance()
         with self.lock:
             crit = self.hw.max_crit_temp()
             hi, lo = self.config["emergency_temp"], self.config["emergency_clear_temp"]
@@ -657,27 +876,33 @@ class Daemon:
                     self.emergency = False
 
             battery = bool(self.config.get("battery_aware") and self.hw.on_battery())
-            if self.emergency:
-                self.hw.set_profile(self.hw.level_profile[2])
-                self._apply_power(emergency=True)
-            elif battery:
-                bp = self.config.get("battery_profile")
-                self.hw.set_profile(bp if bp in self.hw.choices
-                                    else self.hw.level_profile[0])
-                self._apply_power(emergency=False, battery=True)
-            elif self.config["mode"] == "manual":
-                self.hw.set_profile(self.config["manual_profile"])
-                self._apply_power(emergency=False)
-            else:  # auto
-                t = self.policy_temp()
-                if t is not None:
-                    self.level = target_level(
-                        t, self.config["quiet_below"], self.config["cool_above"],
-                        self.level, self.config["hysteresis"])
-                    self.hw.set_profile(self.hw.level_profile[self.level])
-                self._apply_power(emergency=False)
-            self._apply_cpu_pref(self.emergency, battery)
-            self._apply_gpu(self.emergency, battery)
+            mission = self.config.get("mission", "")
+            if mission in MISSIONS and not self.emergency:
+                # a mission owns the whole stance (profile + power + pref + gpu)
+                self._apply_mission(mission, self.config.get("intensity", 2), battery)
+            else:
+                self._endure_teardown()         # emergency/legacy: drop Endure trims
+                if self.emergency:
+                    self.hw.set_profile(self.hw.level_profile[2])
+                    self._apply_power(emergency=True)
+                elif battery:
+                    bp = self.config.get("battery_profile")
+                    self.hw.set_profile(bp if bp in self.hw.choices
+                                        else self.hw.level_profile[0])
+                    self._apply_power(emergency=False, battery=True)
+                elif self.config["mode"] == "manual":
+                    self.hw.set_profile(self.config["manual_profile"])
+                    self._apply_power(emergency=False)
+                else:  # auto
+                    t = self.policy_temp()
+                    if t is not None:
+                        self.level = target_level(
+                            t, self.config["quiet_below"], self.config["cool_above"],
+                            self.level, self.config["hysteresis"])
+                        self.hw.set_profile(self.hw.level_profile[self.level])
+                    self._apply_power(emergency=False)
+                self._apply_cpu_pref(self.emergency, battery)
+                self._apply_gpu(self.emergency, battery)
             self.applied_profile = self.hw.get_profile()
         self.write_status()      # always publish (incl. during emergency)
 
@@ -716,6 +941,119 @@ class Daemon:
                 if "default" in self.hw.epp_choices:
                     self.hw.set_epp("default")
                 self._epp_dirty = False
+
+    # ---- mission layer (cool / perf / endure presets over the raw knobs) ---- #
+    def _set_cap(self, cap):
+        """Apply (cap>0) or release (cap==0) the CPU PL1, tracking dirtiness."""
+        if cap and cap > 0:
+            self.hw.set_power_w(cap)
+            self._power_dirty = True
+        elif self._power_dirty:
+            self.hw.restore_power()
+            self._power_dirty = False
+
+    def _set_turbo(self, desired):
+        if not self.hw.has_turbo:
+            return
+        if desired is not None:
+            self.hw.set_turbo(desired)
+            self._turbo_dirty = True
+        elif self._turbo_dirty:
+            self.hw.set_turbo(True)
+            self._turbo_dirty = False
+
+    def _set_epp(self, pref):
+        if not self.hw.has_epp:
+            return
+        if pref and pref in self.hw.epp_choices:
+            self.hw.set_epp(pref)
+            self._epp_dirty = True
+        elif self._epp_dirty:
+            if "default" in self.hw.epp_choices:
+                self.hw.set_epp("default")
+            self._epp_dirty = False
+
+    def _apply_mission(self, mission, intensity, battery):
+        intensity = max(0, min(INTENSITY_MAX, int(intensity)))
+        if mission != "endure":
+            self._endure_teardown()
+        if mission == "cool":
+            self._mission_cool(intensity)
+        elif mission == "perf":
+            self._mission_perf(intensity)
+        elif mission == "endure":
+            self._mission_endure(intensity)
+        self._apply_gpu(False, battery)        # honor any GPU power cap config
+
+    def _mission_cool(self, i):
+        """Survive heat: cooler fans + lower watts as intensity rises."""
+        self.hw.set_profile(self.hw.level_profile[2 if i >= 2 else 1])
+        base = self.hw.power_base_w or 45
+        self._set_cap([0, base, round(base * 0.8), round(base * 0.6),
+                       round(base * 0.5)][i])
+        self._set_turbo(False if i >= 3 else None)
+        self._set_epp(["", "", "balance_power", "power", "power"][i])
+
+    def _mission_perf(self, i):
+        """Unleash: max fans, more power + boost as intensity rises."""
+        self.hw.set_profile(self.hw.level_profile[2])
+        base = self.hw.power_base_w or 45
+        self._set_cap([base, round(base * 1.4), 0, 0, 0][i])   # 0 = firmware full
+        self._set_turbo(None if i == 0 else True)
+        self._set_epp(["", "balance_performance", "performance",
+                       "performance", "performance"][i])
+
+    def _mission_endure(self, i):
+        """Survive power: minimise draw, hunt the CPU cap toward break-even,
+        sleep the dGPU, and (high intensity) dim the panel + kill the kbd light.
+        This is the 'keep it alive on a trickle' mission."""
+        self.hw.set_profile(self.hw.level_profile[0])          # quietest fans
+        self._set_turbo(False)
+        self._set_epp("power" if "power" in self.hw.epp_choices else
+                      "balance_power" if "balance_power" in self.hw.epp_choices
+                      else "")
+        base = self.hw.power_base_w or 45
+        # ceiling = perf you'll tolerate; floor = how thrifty this intensity goes
+        ceil = [base, round(base * 0.7), round(base * 0.5),
+                round(base * 0.4), round(base * 0.33)][i]
+        floor = [round(base * 0.55), 25, 18, 12, PL_MIN_W][i]
+        ceil = max(PL_MIN_W, ceil)
+        floor = max(PL_MIN_W, min(floor, ceil))
+        # closed loop: tighten while the battery drains, relax when there's surplus
+        cur = self._endure_cap if self._endure_cap is not None else ceil
+        bw = (self._balance or {}).get("battery_w")
+        if bw is not None:
+            if bw < -1 and cur > floor:
+                cur = max(floor, cur - 3)
+            elif bw > 2 and cur < ceil:
+                cur = min(ceil, cur + 2)
+        cur = max(floor, min(ceil, cur))
+        self._endure_cap = cur
+        self._set_cap(cur)
+        # the biggest idle lever: let the discrete GPU drop to D3cold when unused
+        if self.config.get("endure_gpu_sleep") and self.hw.gpu.has_runtime_pm:
+            self.hw.gpu.set_runtime_pm(True)
+            self._gpu_pm_dirty = True
+        elif self._gpu_pm_dirty and not self.config.get("endure_gpu_sleep"):
+            self.hw.gpu.set_runtime_pm(False)
+            self._gpu_pm_dirty = False
+        # "at all costs" panel/keyboard trims at high intensity
+        if self.config.get("endure_trim") and i >= 3:
+            self.hw.dim()
+            self._trim_dirty = True
+        elif self._trim_dirty:
+            self.hw.undim()
+            self._trim_dirty = False
+
+    def _endure_teardown(self):
+        """Undo Endure-only side effects (panel trims + forced dGPU runtime PM)."""
+        self._endure_cap = None
+        if self._trim_dirty:
+            self.hw.undim()
+            self._trim_dirty = False
+        if self._gpu_pm_dirty:
+            self.hw.gpu.set_runtime_pm(False)
+            self._gpu_pm_dirty = False
 
     def _apply_gpu(self, emergency, battery):
         """Cap the discrete GPU's power. Emergency/battery -> minimum; otherwise
@@ -864,13 +1202,25 @@ class Daemon:
                     "epp_choices": self.hw.epp_choices,
                 },
                 "cpu_clamp": self.clamp_status(),
+                "mission": self.config.get("mission", ""),
+                "intensity": self.config.get("intensity", 2),
+                "endure": {
+                    "gpu_sleep": self.config.get("endure_gpu_sleep", True),
+                    "trim": self.config.get("endure_trim", True),
+                    "cap_w": self._endure_cap,
+                    "dimmed": self._trim_dirty,
+                },
+                "power_balance": self._balance,
                 "config": self.config,
             }
 
     def _gpu_status(self):
         g = self.hw.gpu
+        rt = g.runtime_status()
         if not g.available:
-            return {"available": False}
+            # nvidia-smi may be locked/absent yet we can still drive runtime PM
+            return {"available": False, "runtime_pm": g.has_runtime_pm,
+                    "runtime_status": rt, "asleep": rt == "suspended"}
         info = g.query() or {}
         return {
             "available": True,
@@ -883,6 +1233,9 @@ class Daemon:
             "max_w": g.max_w,
             "default_w": g.default_w,
             "cap_w": self.config.get("gpu_power_limit_w", 0),
+            "runtime_pm": g.has_runtime_pm,
+            "runtime_status": rt,
+            "asleep": rt == "suspended",
         }
 
     def handle_cmd(self, msg):
@@ -947,6 +1300,23 @@ class Daemon:
                         changes[ek] = ev
                     else:
                         rejected.append(ek)
+            if "mission" in msg:
+                if msg["mission"] in ("",) + MISSIONS:
+                    changes["mission"] = msg["mission"]
+                else:
+                    rejected.append("mission")
+            if "intensity" in msg:
+                iv = _coerce_num(msg["intensity"], 0, INTENSITY_MAX)
+                if iv is None:
+                    rejected.append("intensity")
+                else:
+                    changes["intensity"] = int(iv)
+            for bk in ("endure_gpu_sleep", "endure_trim"):
+                if bk in msg:
+                    if isinstance(msg[bk], bool):
+                        changes[bk] = msg[bk]
+                    else:
+                        rejected.append(bk)
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)
@@ -1046,6 +1416,7 @@ class Daemon:
                 self.hw.set_turbo(True)        # leave boost enabled (neutral)
             if self._epp_dirty and "default" in self.hw.epp_choices:
                 self.hw.set_epp("default")
+            self._endure_teardown()            # un-dim panel/kbd, free dGPU runtime PM
             self.hw.gpu.restore()
         except Exception as e:
             log(f"restore error: {e}")
@@ -1090,7 +1461,11 @@ def selftest():
     print(f"epp          : {hw.get_epp() or 'n/a'}  (choices: {' '.join(hw.epp_choices) or 'none'})")
     cmax, fmin, fmax = hw.cpu_freq_mhz()
     print(f"cpu freq     : {cmax or '?'} MHz now  (range {fmin or '?'}–{fmax or '?'} MHz)")
-    print(f"gpu          : {hw.gpu.name if hw.gpu.available else 'n/a'}")
+    rt = hw.gpu.runtime_status()
+    print(f"gpu          : {hw.gpu.name if hw.gpu.available else 'n/a'}"
+          f"{f'  (runtime PM: {rt})' if hw.gpu.has_runtime_pm else ''}")
+    bl = "yes" if hw.backlight else "no"
+    print(f"trims        : panel backlight {bl}, {len(hw.kbd_leds)} kbd led(s)")
     if hw.max_crit_temp() is None:
         ok = False
     print("RESULT       :", "OK" if ok else "DEGRADED")

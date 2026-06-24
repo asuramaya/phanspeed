@@ -17,6 +17,8 @@ PhanSpeed never tries to set fan speed. The levers that *do* work:
 | EPP | `cpufreq/energy_performance_preference` | HWP perf↔efficiency bias (per-state scenes) |
 | Turbo | `intel_pstate/no_turbo` | boost on/off (often BIOS-locked; latched if writes fail) |
 | GPU power | `nvidia-smi -pl` | dGPU watts (locked on some laptop firmware) |
+| dGPU sleep | PCI `power/control` → `auto` | lets the discrete GPU drop to D3cold when idle (Endure mission; works even where `-pl` is locked) |
+| Panel / kbd | `backlight/*`, `leds/*kbd_backlight*` | brightness trims (Endure "at all costs") |
 
 Other firmware levers seen **locked** on this class of machine and deliberately
 not pursued: voltage **undervolting** (OC mailbox MSR 0x150 swallows offsets —
@@ -55,27 +57,45 @@ debhelper) installing binaries to `/usr/bin`, units to `/lib/systemd/system`, th
 extension system-wide, and a default config conffile. `install.sh` is the
 source/one-line (`curl | bash`) path. `VERSION` is the single source of truth.
 
+## Missions (`mission` + `intensity`)
+
+The user-facing stance is one of three **missions** — `cool` / `perf` / `endure`
+— each owning the whole knob set (profile + PL1 + EPP + turbo + GPU) so you set
+one thing, not six. `intensity` (0–4) is how hard you lean in. An empty `mission`
+(`""`) falls back to the legacy `mode`/`manual_profile` path, fully intact. See
+[MISSIONS.md](MISSIONS.md) for the design and the per-intensity tables.
+
+`endure` is the one with genuinely new control logic: a **closed loop** that
+hunts the PL1 cap toward net battery drain ≤ 0, plus **dGPU sleep** and panel/kbd
+**trims**. It steers by `power_balance` (below).
+
 ## Daemon control loop (`apply_once`, every `poll_interval` ≈ 3 s)
 
-1. Read the hottest CPU sensor; latch/clear the **emergency** state (hysteresis).
-2. Choose the profile, in priority order:
-   emergency → battery (if `battery_aware` and on battery) → manual → auto curve.
-3. `_apply_power` — set the CPU PL1 cap (fixed, or smooth temp ramp under
-   `power_auto`; emergency/battery clamp to base TDP). Reasserted each loop to
-   defeat EC drift.
-4. `_apply_cpu_pref` — drive turbo + EPP (emergency → off/`power`, battery →
-   off/`battery_epp`, else config). A turbo write the firmware rejects is latched
-   off so it doesn't retry/log-spam.
-5. `_apply_gpu` — set the GPU cap, but only when the **live enforced limit drifts
-   from target** (survives runtime power-gating without spamming the slow
-   `nvidia-smi -pl`).
-6. `write_status()` — publish the JSON snapshot (always, including emergencies).
-   Includes `cpu_clamp`: using per-core freq + CPU busy% (`/proc/stat`), it flags
-   a hardware power/PROCHOT clamp (top core pinned near the floor under load with
-   thermal headroom — a USB-C power draw / weak charger / battery limit, not heat).
+1. `_sample_busy()` + `power_balance()` — sample CPU busy% (`/proc/stat`) and the
+   **power picture**: watts in, net battery power (`+`charging/`−`draining, from
+   `power_now`/`current_now` or a charge-gauge delta), total draw, runtime ETA.
+2. Read the hottest CPU sensor; latch/clear the **emergency** state (hysteresis).
+3. Pick the stance, in priority order: **emergency** → **mission** (`cool`/`perf`/
+   `endure` via `_apply_mission`) → legacy (battery → manual → auto curve).
+   Emergency always wins and tears down any Endure trims.
+4. `_apply_power` — set the CPU PL1 cap (fixed, smooth temp ramp under
+   `power_auto`, or the Endure closed-loop hunt; emergency/battery clamp to base
+   TDP). Reasserted each loop to defeat EC drift.
+5. `_apply_cpu_pref` — drive turbo + EPP (emergency → off/`power`, battery →
+   off/`battery_epp`, missions per their table, else config). A turbo write the
+   firmware rejects is latched off so it doesn't retry/log-spam.
+6. `_apply_gpu` — set the GPU **cap** only when the live enforced limit drifts
+   from target (survives runtime power-gating without spamming `nvidia-smi -pl`).
+   Endure additionally drives the dGPU's PCI `power/control` to `auto` so it can
+   reach D3cold, and applies the panel/keyboard trims at high intensity.
+7. `write_status()` — publish the JSON snapshot (always, including emergencies),
+   with `power_balance`, `mission`/`intensity`, the dGPU `runtime_status`, and
+   `cpu_clamp`: per-core freq + busy% flagging a hardware power/PROCHOT clamp (top
+   core pinned near the floor under load with thermal headroom — a USB-C power
+   draw / weak charger / battery limit, not heat).
 
 On exit/crash the profile, CPU PL1, GPU limit, turbo, and EPP are restored to
-neutral defaults.
+neutral defaults, and any Endure panel/kbd trim + forced dGPU runtime PM is undone.
 
 ## Security model (see also [SECURITY.md](../SECURITY.md))
 

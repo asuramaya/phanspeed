@@ -7,6 +7,9 @@ Wraps the control socket and delegates to the helper binaries, so everything is
 reachable as `phanspeed <verb>` instead of a scatter of phanspeed-* commands.
 
   phanspeed status [--json]
+  phanspeed mission <cool|perf|endure|off>   the three stances; off = legacy
+  phanspeed survive                          shortcut for `mission endure`
+  phanspeed intensity <0-4|+|->              lean within the active mission
   phanspeed profile <quiet|balanced|cool|performance|auto>
   phanspeed power <WATTS|auto|full>
   phanspeed epp <performance|balance_performance|balance_power|power|auto>
@@ -27,6 +30,8 @@ VERSION_FILES = ("/usr/share/phanspeed/VERSION",
                      os.path.abspath(__file__))), "VERSION"))
 PROFILES = ("quiet", "balanced", "cool", "performance")
 EPPS = ("performance", "balance_performance", "balance_power", "power")
+MISSIONS = ("cool", "perf", "endure")
+INTENSITY_MAX = 4
 
 
 def _sock(obj):
@@ -75,13 +80,32 @@ def cmd_status(args):
     p = st.get("power", {}) or {}
     cp = st.get("cpu_pref", {}) or {}
     temps = st.get("temps", {}) or {}
+    bal = st.get("power_balance") or {}
+    gpu = st.get("gpu", {}) or {}
     cpu = temps.get("coretemp:Package id 0") or temps.get("dell_ddv:CPU")
+    mission = st.get("mission") or ""
+    if mission in MISSIONS:
+        print(f"mission : {mission}  (intensity {st.get('intensity', 2)}/{INTENSITY_MAX})")
     line = f"profile : {st.get('active_profile')}  (mode {st.get('mode')})"
     if st.get("emergency"):
         line += "  ⚠ EMERGENCY"
     print(line)
     if cpu is not None:
         print(f"cpu temp: {cpu:.0f}°C")
+    # power balance — the Endure instrument (shown whenever we have a reading)
+    bw = bal.get("battery_w")
+    if bw is not None:
+        arrow = "▲ holding/charging" if bw >= 0 else "▼ draining"
+        rem = bal.get("remaining_min")
+        rem_s = f"  ~{rem // 60}h{rem % 60:02d}m" if isinstance(rem, int) else ""
+        inw, draw = bal.get("in_w"), bal.get("draw_w")
+        extra = (f"  (in {inw:g}W, draw {draw:g}W)"
+                 if inw is not None and draw is not None else "")
+        print(f"balance : {bw:+g} W {arrow}{rem_s}{extra}")
+    if gpu.get("runtime_status"):
+        draw = gpu.get("draw")
+        draw_s = f" · {round(draw)} W" if isinstance(draw, (int, float)) else ""
+        print(f"dgpu    : {gpu['runtime_status']}{draw_s}")
     if p.get("available"):
         cap = p.get("limit_w")
         print(f"cpu pwr : {p.get('current_w')} W  (cap {cap or 'full'}"
@@ -141,6 +165,45 @@ def cmd_epp(args):
         sys.exit(f"unknown epp '{v}'")
 
 
+def cmd_mission(args):
+    if not args:
+        sys.exit("usage: phanspeed mission <cool|perf|endure|off>")
+    m = args[0]
+    if m in ("off", "none", "auto", ""):
+        _set(mission="")
+        print("mission -> off (legacy mode/profile control)")
+    elif m in MISSIONS:
+        _set(mission=m)
+        print(f"mission -> {m}")
+    else:
+        sys.exit(f"unknown mission '{m}' (pick {', '.join(MISSIONS)}, or off)")
+
+
+def cmd_survive(_args):
+    _set(mission="endure")
+    print("mission -> endure  (power witchcraft engaged — keeping it alive)")
+
+
+def cmd_intensity(args):
+    if not args:
+        sys.exit(f"usage: phanspeed intensity <0-{INTENSITY_MAX}|+|->")
+    v = args[0]
+    if v in ("+", "-", "up", "down"):
+        st = _status() or {}
+        cur = st.get("intensity", 2)
+        cur = (cur + 1) if v in ("+", "up") else (cur - 1)
+        n = max(0, min(INTENSITY_MAX, cur))
+    else:
+        try:
+            n = int(v)
+        except ValueError:
+            sys.exit(f"intensity takes 0-{INTENSITY_MAX}, '+' or '-'")
+        if not 0 <= n <= INTENSITY_MAX:
+            sys.exit(f"intensity out of range (0-{INTENSITY_MAX})")
+    _set(intensity=n)
+    print(f"intensity -> {n}/{INTENSITY_MAX}")
+
+
 def cmd_delegate(binary, args):
     path = f"/usr/local/bin/{binary}"
     if not os.path.exists(path):
@@ -174,6 +237,7 @@ def main():
     handlers = {
         "status": cmd_status, "profile": cmd_profile, "power": cmd_power,
         "epp": cmd_epp, "version": cmd_version,
+        "mission": cmd_mission, "survive": cmd_survive, "intensity": cmd_intensity,
         "tune": lambda a: cmd_delegate("phanspeed-tune", a),
         "update": lambda a: cmd_delegate("phanspeed-update", a),
     }

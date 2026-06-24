@@ -21,8 +21,10 @@ RuntimeDirectoryMode=0755
 CapabilityBoundingSet=CAP_CHOWN
 AmbientCapabilities=CAP_CHOWN
 NoNewPrivileges=yes
-# Read-only filesystem; strict leaves /dev /proc /sys writable, so the
-# platform_profile write under /sys still works. Config dir re-allowed below.
+# Read-only filesystem; strict leaves /dev /proc /sys writable, so all the
+# daemon's levers under /sys still work: platform_profile, intel-rapl PL1, the
+# panel/keyboard backlight and the dGPU power/control node (Endure mission).
+# Config dir re-allowed below.
 ProtectSystem=strict
 ReadWritePaths=/etc/phanspeed
 ProtectHome=tmpfs

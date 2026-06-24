@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] — 2026-06-24
+
+### Added
+- **The third mission — Endure.** PhanSpeed's two earlier crises taught it to
+  *survive heat* and *unleash performance*; the third is **surviving power**.
+  PhanSpeed is now a single governor with three stances, each redefining the
+  control objective and re-skinning the pill's hero readout:
+  - 🧊 **Cool** — cap watts at the source (temperature is the metric).
+  - 🔥 **Perf** — full power + boost where allowed (clock/watts is the metric).
+  - 🔋 **Endure** — minimise total draw to live on a power trickle (the
+    **power-balance / break-even gauge** is the metric).
+  See [docs/MISSIONS.md](docs/MISSIONS.md).
+- **`mission` + `intensity` config** (`""`/`cool`/`perf`/`endure`; `0–4`). A
+  mission owns the whole stance (profile + CPU power + EPP + turbo + GPU);
+  `""` keeps the legacy `mode`/`manual_profile` behaviour. `intensity` is how
+  hard you lean into the active mission.
+- **Power-balance instrument** (`power_balance` in status): watts in from the
+  charger, **net battery power** (+ charging / − draining, from `power_now`/
+  `current_now`, or a charge-gauge delta on batteries like this Dell that report
+  neither), total **system draw**, and a **runtime estimate**. This is the
+  break-even gauge the Endure mission steers by.
+- **Discrete-GPU sleep** — the daemon can drive the dGPU's PCI `power/control`
+  to `auto` so it drops to D3cold when idle (the single biggest idle-power lever
+  on an Optimus laptop: it otherwise burns several watts at 0% utilisation).
+  Works even where `nvidia-smi -pl` is firmware-locked. `runtime_status`/`asleep`
+  are reported in status. *(Note: `nvidia-persistenced`, if running, pins the GPU
+  on and defeats this.)*
+- **Endure "at all costs" trims** — at high intensity the daemon dims the panel
+  backlight and turns off the keyboard backlight (remembered + restored on exit
+  or mission change). Gated by `endure_trim`; dGPU sleep by `endure_gpu_sleep`.
+- **Endure closed loop** — in Endure the CPU PL1 cap *hunts* between an
+  intensity-set floor and ceiling toward **net battery drain ≤ 0**: it tightens
+  while the battery drains and relaxes when there's surplus.
+- **CLI:** `phanspeed mission <cool|perf|endure|off>`, `phanspeed survive`
+  (shortcut for Endure), `phanspeed intensity <0-4|+|->`; `phanspeed status` now
+  shows the mission, the break-even balance line, and the dGPU runtime state.
+
+### Changed
+- **Pill is now two-layer** (metadata 10→11): a **mission chip row**
+  (🧊 Cool · 🔥 Perf · 🔋 Endure) with an **intensity dial** beneath it. The
+  headline readout re-skins to the active mission — temperature for Cool,
+  clock/watts for Perf, and the **break-even gauge** (`+2W ▲ holding · 11h` /
+  `−8W ▼ 1h12m`, plus watts in / draw / dGPU state) for Endure. Picking a raw
+  profile or toggling Auto exits mission mode.
+
 ## [0.14.0] — 2026-06-21
 
 ### Added
