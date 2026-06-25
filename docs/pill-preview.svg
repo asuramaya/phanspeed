@@ -57,9 +57,9 @@
 
   <line x1="20" y1="232" x2="360" y2="232" stroke="#37373d"/>
 
-  <!-- rows -->
+  <!-- everything else collapses under one Advanced expander -->
   <g font-size="13">
-    <text x="24" y="262" class="txt">CPU power: 12 W  (closed-loop → break-even)</text>
+    <text x="24" y="262" class="dim">⚙ Advanced</text>
     <text x="356" y="262" class="dim" font-size="11" text-anchor="end">›</text>
   </g>
 

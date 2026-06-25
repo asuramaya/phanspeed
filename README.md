@@ -52,10 +52,11 @@ intensity <0-4>`, or the mission chips in the pill. Full design:
 
 A Quick Settings pill that:
 - A **mission chip row** (🧊 Cool · 🔥 Perf · 🔋 Endure) + an **intensity dial**;
-  the headline re-skins to temp / clock-watts / break-even per mission.
-- Shows the active profile + CPU temp at a glance (icon changes with mission/profile).
-- **Click the pill** → toggle *Auto by temperature* on/off.
-- **Open the menu** → pick a profile manually (Quiet/Balanced/Cool/Performance),
+  the headline re-skins to temp / clock-watts / break-even per mission. Everything
+  else lives under one **⚙ Advanced** expander.
+- Shows the active mission + its hero metric at a glance (icon changes per mission).
+- **Click the pill** → cycle the mission (Cool → Perf → Endure).
+- **Open ⚙ Advanced** → pick a raw profile (Quiet/Balanced/Cool/Performance),
   set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat) or
   let it **scale power with temperature**, and see live CPU/GPU temps and fan RPM.
 - **Quiet on battery** — optionally force a calm profile + low CPU power whenever

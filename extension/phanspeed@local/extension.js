@@ -151,7 +151,7 @@ class PhanToggle extends QuickMenuToggle {
         super._init({title: 'PhanSpeed', iconName: DEFAULT_ICON, toggleMode: true});
         this.menu.setHeader(DEFAULT_ICON, 'PhanSpeed', 'Thermal control');
 
-        // mission chips (the primary, top-layer control) + intensity dots
+        // ---- the face: mission chips + intensity + one hero readout ---- //
         this._missionItems = {};
         this._missionSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._missionSection);
@@ -161,11 +161,6 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._intensitySection);
         this._buildIntensity();
 
-        // profile chips (secondary layer — picking one exits mission mode)
-        this._profileItems = {};
-        this._profileSection = new PopupMenu.PopupMenuSection();
-        this.menu.addMenuItem(this._profileSection);
-
         // power-clamp / alert banner (hidden until something's wrong)
         this._alertSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._alertSection);
@@ -173,35 +168,51 @@ class PhanToggle extends QuickMenuToggle {
         this._clampItem.visible = false;
         this._alertSection.addMenuItem(this._clampItem);
 
-        // power + gpu submenus go in their own section (built lazily)
+        // hero readout (re-skins per mission) + live temps/fans
+        this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
+        this.menu.addMenuItem(this._sceneItem);
+        this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
+        this.menu.addMenuItem(this._tempItem);
+
+        // ---- Advanced (collapsed): raw profile + power/gpu/turbo/epp/battery ---- //
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._advancedOpen = false;
+        this._advancedToggle = new PopupMenu.PopupMenuItem('');
+        this._advancedToggle.connect('activate', () => {
+            this._advancedOpen = !this._advancedOpen;
+            this._advancedBody.actor.visible = this._advancedOpen;
+            this._updateAdvancedLabel();
+        });
+        this.menu.addMenuItem(this._advancedToggle);
+        this._advancedBody = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._advancedBody);
+
+        // profile chips (raw platform_profile — picking one exits mission mode)
+        this._profileItems = {};
+        this._profileSection = new PopupMenu.PopupMenuSection();
+        this._advancedBody.addMenuItem(this._profileSection);
+        // power + gpu submenus (built lazily)
         this._powerSection = new PopupMenu.PopupMenuSection();
-        this.menu.addMenuItem(this._powerSection);
+        this._advancedBody.addMenuItem(this._powerSection);
         this._powerSub = null;
         this._powerItems = {};
         this._gpuSub = null;
         this._gpuItems = {};
-
         // turbo + energy preference
         this._cpuPrefSection = new PopupMenu.PopupMenuSection();
-        this.menu.addMenuItem(this._cpuPrefSection);
+        this._advancedBody.addMenuItem(this._cpuPrefSection);
         this._cpuPrefBuilt = false;
         this._turboItem = null;
         this._eppSub = null;
         this._eppItems = {};
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._batteryItem = new PopupMenu.PopupSwitchMenuItem('Quiet on battery', false);
         this._batteryItem.connect('toggled', (_i, state) => {
             sendCmd({cmd: 'set', battery_aware: state});
             this._scheduleRefresh();
         });
-        this.menu.addMenuItem(this._batteryItem);
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
-        this.menu.addMenuItem(this._sceneItem);
-        this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
-        this.menu.addMenuItem(this._tempItem);
+        this._advancedBody.addMenuItem(this._batteryItem);
+        this._advancedBody.actor.visible = false;
+        this._updateAdvancedLabel();
 
         // update notice (hidden until a newer release is found) + version footer
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -213,12 +224,18 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._versionItem);
         this._updateLatest = null;     // latest version string when an update is available
 
-        // clicking the pill body toggles Auto on/off (and exits any mission)
+        // clicking the pill body cycles the mission: Cool → Perf → Endure → …
         this.connect('clicked', () => {
-            sendCmd({cmd: 'set', mission: '', mode: this.checked ? 'auto' : 'manual'});
+            const i = MISSIONS.indexOf(this._activeMission);   // '' → -1 → Cool
+            sendCmd({cmd: 'set', mission: MISSIONS[(i + 1) % MISSIONS.length]});
             this._scheduleRefresh();
         });
         this._built = false;
+    }
+
+    _updateAdvancedLabel() {
+        this._advancedToggle.label.clutter_text.set_markup(
+            `<span foreground="${DIM}">⚙ Advanced  ${this._advancedOpen ? '⌄' : '›'}</span>`);
     }
 
     _buildProfiles(choices) {
@@ -491,7 +508,7 @@ class PhanToggle extends QuickMenuToggle {
         this.iconName = (st.emergency || clamp.clamped)
             ? 'power-profile-performance-symbolic'
             : (mission ? MISSION_ICON[mission] : (PROFILE_ICON[profile] || DEFAULT_ICON));
-        this.checked = auto || mission !== '';
+        this.checked = mission !== '';
         this._batteryItem.setToggleState(batteryAware);
 
         // subtitle (shown on the tile): the active mission re-skins it to its
@@ -571,8 +588,12 @@ class PhanToggle extends QuickMenuToggle {
                 item.setOrnament(Number(w) === cap
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
-        if (this._turboItem)
+        if (this._turboItem) {
+            // hide the switch entirely when turbo can't actually be controlled
+            // (firmware-locked or it won't hold) — a dead switch is worse than none
+            this._turboItem.visible = pref.turbo_available === true;
             this._turboItem.setToggleState(pref.turbo === true);
+        }
         if (this._eppSub) {
             const eppCfg = typeof pref.epp_cfg === 'string' ? pref.epp_cfg : '';
             const eppCur = typeof pref.epp === 'string' ? pref.epp : null;

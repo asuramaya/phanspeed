@@ -15,7 +15,7 @@ PhanSpeed never tries to set fan speed. The levers that *do* work:
 | Thermal profile | `/sys/firmware/acpi/platform_profile` | how aggressively the EC runs the fans |
 | CPU power (PL1) | `/sys/class/powercap/intel-rapl:*` | sustained CPU watts → heat at the source |
 | EPP | `cpufreq/energy_performance_preference` | HWP perf↔efficiency bias (per-state scenes) |
-| Turbo | `intel_pstate/no_turbo` | boost on/off (often BIOS-locked; latched if writes fail) |
+| Turbo | `intel_pstate/no_turbo` | boost on/off (often BIOS-locked, or the EC reverts our write — latched as uncontrollable either way, and the pill then hides the switch) |
 | GPU power | `nvidia-smi -pl` | dGPU watts (locked on some laptop firmware) |
 | dGPU sleep | PCI `power/control` → `auto` | lets the discrete GPU drop to D3cold when idle (Endure mission; works even where `-pl` is locked) |
 | Panel / kbd | `backlight/*`, `leds/*kbd_backlight*` | brightness trims (Endure "at all costs") |

@@ -332,9 +332,14 @@ class Hardware:
         self.turbo_path = (TURBO_PATH if os.path.exists(TURBO_PATH)
                            and os.access(TURBO_PATH, os.W_OK) else None)
         # Some firmware (e.g. Dell with Turbo Boost disabled in BIOS) exposes a
-        # writable no_turbo node but rejects the write with EPERM/EIO. Latch that
-        # so we stop retrying + log-spamming every poll.
+        # writable no_turbo node but rejects the write with EPERM/EIO. Others
+        # accept the write but the EC reverts it within seconds (esp. under load),
+        # so turbo can be capped OFF but never held ON. Either way we latch turbo
+        # as uncontrollable so we stop fighting the firmware — and the pill hides
+        # the switch, since a control we can't hold isn't a real control.
         self.turbo_locked = False
+        self._turbo_cmd = None     # last value we wrote to no_turbo
+        self._turbo_reverts = 0    # consecutive times our ON write was reverted
         # per-cpu EPP nodes + the kernel's offered preference list
         self.epp_paths = []
         self.epp_choices = []
@@ -430,11 +435,26 @@ class Hardware:
         if not self.has_turbo:
             return False
         want = "0" if on else "1"
-        if _read(self.turbo_path) == want:
+        cur = _read(self.turbo_path)
+        if cur == want:
+            self._turbo_reverts = 0          # holding fine
+            self._turbo_cmd = want
             return True
+        # We last commanded turbo ON but it's OFF again → the firmware/EC reverted
+        # us (Dell snaps no_turbo back to 1, especially under load). Count the
+        # reverts and give up after a few: turbo that won't stay on isn't a real
+        # control, so latch it off and let the pill drop the switch.
+        if self._turbo_cmd == "0" and cur == "1":
+            self._turbo_reverts += 1
+            if self._turbo_reverts >= 3:
+                self.turbo_locked = True
+                log("turbo keeps reverting to off (firmware-controlled) — "
+                    "disabling turbo control")
+                return False
         if _write(self.turbo_path, want):
+            self._turbo_cmd = want
             return True
-        # write rejected (turbo disabled/locked in firmware) — latch and stop
+        # write outright rejected (turbo disabled/locked in firmware) — latch
         self.turbo_locked = True
         log("turbo control unavailable (disabled in BIOS?) — not retrying")
         return False

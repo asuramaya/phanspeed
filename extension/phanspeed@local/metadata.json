@@ -4,5 +4,5 @@
   "description": "Dell thermal/power control as a Quick Settings pill — three missions (🧊 Cool, 🔥 Perf, 🔋 Endure) with an intensity dial. Endure keeps the laptop alive on a power trickle: closed-loop CPU cap to break-even, dGPU sleep, panel/kbd trims. Requires the phanspeedd daemon (https://github.com/asuramaya/phanspeed).",
   "shell-version": ["46", "47", "48", "49", "50"],
   "url": "https://github.com/asuramaya/phanspeed",
-  "version": 12
+  "version": 13
 }

@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] — 2026-06-25
+
+### Changed
+- **Pill is now mission-first.** The face is just the three mission chips
+  (🧊 Cool · 🔥 Perf · 🔋 Endure), the intensity dial, and one hero readout that
+  re-skins per mission. Everything else — raw profile, CPU/GPU power, turbo, EPP,
+  quiet-on-battery — collapses under a single **⚙ Advanced** expander (closed by
+  default). This kills the old duplicate **Cool/Perf** that appeared in both the
+  mission row and a separate profile row. Clicking the tile now **cycles missions**
+  (Cool → Perf → Endure). metadata 12→13.
+
+### Added
+- **Dead-switch detection for turbo.** Some firmware (this Precision with BIOS
+  Turbo "enabled") *accepts* a `no_turbo=0` write but the EC reverts it within
+  seconds — so turbo can be capped OFF but never held ON. The daemon now detects
+  the revert (after a few attempts) and latches turbo as uncontrollable, and the
+  pill **hides the turbo switch** rather than showing a control that does nothing.
+  A lever that can't move the hardware shouldn't look like a switch — the same
+  rule that already hides fan-RPM control.
+
 ## [0.16.0] — 2026-06-25
 
 ### Added
