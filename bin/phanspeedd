@@ -43,6 +43,10 @@ SOCK_PATH = "/run/phanspeed/control.sock"
 STATUS_PATH = "/run/phanspeed/status.json"
 CONFIG_PATH = "/etc/phanspeed/config.json"
 
+VERSION_PATHS = ("/usr/share/phanspeed/VERSION",
+                 os.path.join(os.path.dirname(os.path.dirname(
+                     os.path.abspath(__file__))), "VERSION"))
+
 PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
 CHOICES_PATH = "/sys/firmware/acpi/platform_profile_choices"
 
@@ -199,6 +203,18 @@ def sanitize_config(cfg, choices, sensors):
     if cfg["cool_above"] <= cfg["quiet_below"]:
         cfg["cool_above"] = cfg["quiet_below"] + 1
     return cfg
+
+
+def read_version():
+    for p in VERSION_PATHS:
+        try:
+            with open(p) as f:
+                v = f.read().strip()
+            if v:
+                return v
+        except OSError:
+            continue
+    return None
 
 
 def log(msg):
@@ -647,6 +663,7 @@ def target_level(temp, lo, hi, current, hyst):
 class Daemon:
     def __init__(self):
         self.hw = Hardware()
+        self.version = read_version()
         self.lock = threading.RLock()
         self.emergency = False
         self.level = 1                 # current auto cooling level
@@ -1167,6 +1184,7 @@ class Daemon:
         with self.lock:
             return {
                 "ok": True,
+                "version": self.version,
                 "emergency": self.emergency,
                 "on_battery": self.hw.on_battery(),
                 "mode": self.config["mode"],
@@ -1458,7 +1476,8 @@ def selftest():
     print(f"cpu power    : {'yes ' + str(hw.get_power_w()) + 'W' if hw.has_power else 'n/a'}")
     turbo = ("on" if hw.get_turbo() else "off") if hw.has_turbo else "n/a"
     print(f"turbo        : {turbo}")
-    print(f"epp          : {hw.get_epp() or 'n/a'}  (choices: {' '.join(hw.epp_choices) or 'none'})")
+    epp_choices = ' '.join(hw.epp_choices) or 'none'
+    print(f"epp          : {hw.get_epp() or 'n/a'}  (choices: {epp_choices})")
     cmax, fmin, fmax = hw.cpu_freq_mhz()
     print(f"cpu freq     : {cmax or '?'} MHz now  (range {fmin or '?'}–{fmax or '?'} MHz)")
     rt = hw.gpu.runtime_status()

@@ -64,6 +64,9 @@ A Quick Settings pill that:
   utilization in the pill.
 - Turns red on the **emergency override** (forced max cooling above 90 °C, which
   also drops the CPU to its base TDP to cut heat at the source).
+- **Update from the pill** — shows the running version, and an **⬆ Update to
+  vX.Y.Z** item when a newer release is out (one-click install via a polkit
+  prompt). Packaged installs also self-update daily in the background.
 
 ## Architecture
 

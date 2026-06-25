@@ -14,7 +14,7 @@ reachable as `phanspeed <verb>` instead of a scatter of phanspeed-* commands.
   phanspeed power <WATTS|auto|full>
   phanspeed epp <performance|balance_performance|balance_power|power|auto>
   phanspeed tune [...]      (-> phanspeed-tune; needs root)
-  phanspeed update [--check](-> phanspeed-update)
+  phanspeed update [--check] [--json]  (-> phanspeed-update)
   phanspeed version
   phanspeed help
 """

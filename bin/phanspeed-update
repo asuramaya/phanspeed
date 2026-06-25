@@ -69,25 +69,34 @@ def fetch(url, binary=False, timeout=20):
 
 
 def main():
-    check_only = "--check" in sys.argv
+    json_out = "--json" in sys.argv
+    check_only = "--check" in sys.argv or json_out   # --json implies check-only
     cur = installed_version()
+
+    def emit(available, latest=None, note=None):
+        if json_out:
+            print(json.dumps({"current": cur, "latest": latest,
+                              "available": bool(available)}))
+        elif note:
+            print(note)
+
     if cur is None:
-        print("not a .deb install — auto-update supports the packaged install only.")
+        emit(False, note="PhanSpeed not detected; nothing to update.")
         return 0
     try:
         rel = json.loads(fetch(API))
     except Exception as e:
-        print(f"update check failed (offline?): {e}")
+        emit(False, note=f"update check failed (offline?): {e}")
         return 0
     tag = (rel.get("tag_name") or "").lstrip("v")
     if not tag:
-        print("no release tag found.")
+        emit(False, note="no release tag found.")
         return 0
     if vtuple(tag) <= vtuple(cur):
-        print(f"up to date (installed {cur}, latest {tag}).")
+        emit(False, latest=tag, note=f"up to date (installed {cur}, latest {tag}).")
         return 0
 
-    print(f"update available: {cur} -> {tag}")
+    emit(True, latest=tag, note=f"update available: {cur} -> {tag}")
     if check_only:
         return 0
 

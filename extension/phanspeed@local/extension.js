@@ -203,6 +203,16 @@ class PhanToggle extends QuickMenuToggle {
         this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
         this.menu.addMenuItem(this._tempItem);
 
+        // update notice (hidden until a newer release is found) + version footer
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._updateItem = new PopupMenu.PopupMenuItem('');
+        this._updateItem.visible = false;
+        this._updateItem.connect('activate', () => this._runUpdate());
+        this.menu.addMenuItem(this._updateItem);
+        this._versionItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this.menu.addMenuItem(this._versionItem);
+        this._updateLatest = null;     // latest version string when an update is available
+
         // clicking the pill body toggles Auto on/off (and exits any mission)
         this.connect('clicked', () => {
             sendCmd({cmd: 'set', mission: '', mode: this.checked ? 'auto' : 'manual'});
@@ -372,6 +382,72 @@ class PhanToggle extends QuickMenuToggle {
         });
     }
 
+    // Ask the (networked, isolated) updater whether a newer release exists. The
+    // daemon itself has no network — this runs in the user session.
+    _checkUpdate() {
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(
+                ['phanspeed', 'update', '--check', '--json'],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+        } catch (_e) {
+            return;
+        }
+        proc.communicate_utf8_async(null, _cancellable, (p, res) => {
+            let out;
+            try {
+                [, out] = p.communicate_utf8_finish(res);
+            } catch (_e) {
+                return;
+            }
+            let latest = null;
+            try {
+                const o = JSON.parse(String(out || '').trim().split('\n').pop());
+                if (o && o.available && typeof o.latest === 'string')
+                    latest = o.latest;
+            } catch (_e) {
+                latest = null;
+            }
+            this._updateLatest = latest;
+            this.refresh();
+        });
+    }
+
+    // Install the update with a polkit prompt. sh picks the packaged binary if
+    // present, else the source copy, so it works for both install layouts.
+    _runUpdate() {
+        const cmd = 'p=/usr/bin/phanspeed-update; [ -x "$p" ] || '
+            + 'p=/usr/local/bin/phanspeed-update; exec "$p"';
+        try {
+            const proc = Gio.Subprocess.new(
+                ['pkexec', '/bin/sh', '-c', cmd],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
+            proc.wait_async(_cancellable, () => {
+                this._checkUpdate();           // re-check; clears the notice when done
+                this._scheduleRefresh();
+            });
+        } catch (e) {
+            logError(e, 'PhanSpeed update');
+        }
+        try {
+            Main.notify('PhanSpeed', `Installing v${this._updateLatest || ''}…`);
+        } catch (_e) {
+            // notifications are best-effort
+        }
+    }
+
+    _refreshUpdate(ver) {
+        this._versionItem.label.clutter_text.set_markup(
+            `<span foreground="${DIM}">phanspeed ${ver ? `v${esc(ver)}` : '(version unknown)'}</span>`);
+        const latest = this._updateLatest;
+        const show = !!latest && (!ver || latest !== ver);
+        this._updateItem.visible = show;
+        if (show) {
+            this._updateItem.label.clutter_text.set_markup(
+                `<span foreground="${ACCENT}" font_weight="bold">⬆ Update to v${esc(latest)}</span>`);
+        }
+    }
+
     refresh() {
         const st = readStatus();
         if (!st || !st.ok) {
@@ -380,6 +456,7 @@ class PhanToggle extends QuickMenuToggle {
             this.iconName = DEFAULT_ICON;
             this._clampItem.visible = false;
             this._tempItem.label.text = 'phanspeedd not running';
+            this._refreshUpdate(null);   // updater is independent of the daemon
             return;
         }
         if (!this._built && Array.isArray(st.choices))
@@ -570,6 +647,9 @@ class PhanToggle extends QuickMenuToggle {
         this._tempItem.label.clutter_text.set_markup(`<span foreground="${DIM}">${markup}</span>`);
 
         this.menu.setHeader(this.iconName, 'PhanSpeed', sub);
+
+        // version footer + update notice (kast-style)
+        this._refreshUpdate(typeof st.version === 'string' ? st.version : null);
     }
 });
 
@@ -592,12 +672,23 @@ export default class PhanSpeedExtension extends Extension {
             this._indicator.toggle.refresh();
             return GLib.SOURCE_CONTINUE;
         });
+        // check for a newer release now, then every 6h (the daemon has no network)
+        this._indicator.toggle._checkUpdate();
+        this._updateTimeout = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, 6 * 3600, () => {
+                this._indicator.toggle._checkUpdate();
+                return GLib.SOURCE_CONTINUE;
+            });
     }
 
     disable() {
         if (this._timeout) {
             GLib.source_remove(this._timeout);
             this._timeout = null;
+        }
+        if (this._updateTimeout) {
+            GLib.source_remove(this._updateTimeout);
+            this._updateTimeout = null;
         }
         if (_cancellable) {
             _cancellable.cancel();

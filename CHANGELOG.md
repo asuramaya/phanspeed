@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] — 2026-06-25
+
+### Added
+- **Update notice + version in the pill** (kast-style). The menu now has a dimmed
+  `phanspeed vX.Y.Z` footer, and when a newer release exists an actionable
+  **⬆ Update to vX.Y.Z** item appears — clicking it installs via a polkit
+  (`pkexec`) prompt. The extension checks on enable and every 6 h by running the
+  isolated updater in the user session (the daemon still has no network).
+- **`phanspeed update --json`** — machine-readable check output
+  (`{"current","latest","available"}`) for the pill and scripts; also closes the
+  `--json` parity gap with the sibling kast CLI. `--json` implies `--check`.
+- **Daemon publishes its `version`** in the status snapshot (read from
+  `/usr/share/phanspeed/VERSION`), so the pill can show it without shelling out.
+
+### Changed
+- Pill metadata 11→12.
+
 ## [0.15.1] — 2026-06-24
 
 ### Fixed
