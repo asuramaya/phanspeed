@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.15.1] — 2026-06-24
+
+### Fixed
+- **Source installs never got the self-updater.** `install.sh` installed
+  `phanspeedd`/`phanspeed`/`-healthcheck`/`-tune` but not `phanspeed-update`, so
+  `phanspeed update` failed with *"cannot run phanspeed-update: No such file or
+  directory"* on every `curl | bash` / source install. The binary is now
+  installed (the `.deb` always had it).
+- **Auto-update could split-brain a source install.** `phanspeed-update` fell back
+  to the VERSION file that `install.sh` writes, so its "not a .deb install" guard
+  never fired — it would `dpkg -i` a `.deb` into `/usr/bin` while the running
+  `/usr/local/bin` copies shadowed it. The install step now gates on a real dpkg
+  registration and gives source installs clear guidance instead. `install.sh` no
+  longer enables the daily auto-update timer for the source layout (auto-update is
+  a packaged-install feature; `phanspeed update --check` still works manually).
+- **`.deb` migration left the old CLI behind.** The postinst removed the old
+  `/usr/local/bin` daemon/helpers when migrating off a source install but missed
+  the main `phanspeed` CLI, leaving a stale copy to shadow the packaged one. Now
+  removed too. `uninstall.sh` also cleans up the updater + its units.
+
 ## [0.15.0] — 2026-06-24
 
 ### Added
