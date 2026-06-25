@@ -50,6 +50,7 @@ install -m 0755 -o root -g root "$SRC/bin/phanspeedd" /usr/local/bin/phanspeedd
 install -m 0755 -o root -g root "$SRC/bin/phanspeed" /usr/local/bin/phanspeed
 install -m 0755 -o root -g root "$SRC/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
 install -m 0755 -o root -g root "$SRC/bin/phanspeed-tune" /usr/local/bin/phanspeed-tune
+install -m 0755 -o root -g root "$SRC/bin/phanspeed-update" /usr/local/bin/phanspeed-update
 # version marker so `phanspeed version` works on source installs too
 install -d -m 0755 /usr/share/phanspeed
 install -m 0644 "$SRC/VERSION" /usr/share/phanspeed/VERSION
@@ -92,14 +93,17 @@ fi
 chown root:root /etc/phanspeed/config.json
 chmod 0600 /etc/phanspeed/config.json
 
-# 3. systemd service + healthcheck timer
+# 3. systemd service + healthcheck/update timers
 echo "-- installing + enabling phanspeed.service"
 install -m 0644 "$SRC/systemd/phanspeed.service" /etc/systemd/system/phanspeed.service
 install -m 0644 "$SRC/systemd/phanspeed-healthcheck.service" /etc/systemd/system/phanspeed-healthcheck.service
 install -m 0644 "$SRC/systemd/phanspeed-healthcheck.timer" /etc/systemd/system/phanspeed-healthcheck.timer
+install -m 0644 "$SRC/systemd/phanspeed-update.service" /etc/systemd/system/phanspeed-update.service
+install -m 0644 "$SRC/systemd/phanspeed-update.timer" /etc/systemd/system/phanspeed-update.timer
 systemctl daemon-reload
 systemctl enable --now phanspeed.service
 systemctl enable --now phanspeed-healthcheck.timer
+systemctl enable --now phanspeed-update.timer
 
 # 4. GNOME Shell extension (into the real user's home)
 echo "-- installing Quick Settings extension -> $EXT_DIR"
