@@ -33,16 +33,23 @@ PKG = "phanspeed"
 VERSION_FILE = "/usr/share/phanspeed/VERSION"
 
 
-def installed_version():
+def deb_version():
+    """The dpkg-registered package version, or None if not a .deb install."""
     try:
         out = subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Version}", PKG],
             stderr=subprocess.DEVNULL)
-        v = out.decode().strip()
-        if v:
-            return v
+        return out.decode().strip() or None
     except Exception:
-        pass
+        return None
+
+
+def installed_version():
+    """Best-effort version for display/--check: dpkg first, else the VERSION
+    file a source install writes."""
+    v = deb_version()
+    if v:
+        return v
     try:
         with open(VERSION_FILE) as f:
             return f.read().strip()
@@ -82,6 +89,17 @@ def main():
 
     print(f"update available: {cur} -> {tag}")
     if check_only:
+        return 0
+
+    # Auto-install (dpkg) is only safe on a packaged install. A source install
+    # (binaries in /usr/local/bin) would be shadowed by a .deb's /usr/bin copies,
+    # so refuse rather than create a split-brain. The VERSION-file fallback above
+    # means `cur` can be set even without dpkg, so gate on the real dpkg check.
+    if deb_version() is None:
+        print("source install detected (not via .deb) — skipping auto-install to\n"
+              "avoid a /usr/local vs /usr/bin split. Update with:\n"
+              "  sudo bash install.sh   (from the repo)\n"
+              "or switch to the packaged install (.deb) for in-place auto-updates.")
         return 0
 
     assets = {a.get("name"): a.get("browser_download_url")

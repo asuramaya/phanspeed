@@ -93,17 +93,18 @@ fi
 chown root:root /etc/phanspeed/config.json
 chmod 0600 /etc/phanspeed/config.json
 
-# 3. systemd service + healthcheck/update timers
+# 3. systemd service + healthcheck timer
 echo "-- installing + enabling phanspeed.service"
 install -m 0644 "$SRC/systemd/phanspeed.service" /etc/systemd/system/phanspeed.service
 install -m 0644 "$SRC/systemd/phanspeed-healthcheck.service" /etc/systemd/system/phanspeed-healthcheck.service
 install -m 0644 "$SRC/systemd/phanspeed-healthcheck.timer" /etc/systemd/system/phanspeed-healthcheck.timer
-install -m 0644 "$SRC/systemd/phanspeed-update.service" /etc/systemd/system/phanspeed-update.service
-install -m 0644 "$SRC/systemd/phanspeed-update.timer" /etc/systemd/system/phanspeed-update.timer
 systemctl daemon-reload
 systemctl enable --now phanspeed.service
 systemctl enable --now phanspeed-healthcheck.timer
-systemctl enable --now phanspeed-update.timer
+# NOTE: the daily auto-update timer is intentionally NOT enabled for a source
+# install — auto-update installs a .deb (into /usr/bin), which would be shadowed
+# by these /usr/local/bin copies. `phanspeed update --check` still works for
+# manual notification; install the .deb for in-place auto-updates.
 
 # 4. GNOME Shell extension (into the real user's home)
 echo "-- installing Quick Settings extension -> $EXT_DIR"
