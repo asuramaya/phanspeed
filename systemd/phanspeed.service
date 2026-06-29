@@ -13,20 +13,16 @@ RuntimeDirectory=phanspeed
 RuntimeDirectoryMode=0755
 
 # --- sandboxing ---------------------------------------------------------
-# Two capabilities are kept:
-#   CAP_CHOWN     — hand ownership of the control socket + status file to the
-#                   logged-in user so the unprivileged pill can read status and
-#                   issue (SO_PEERCRED-gated) commands.
-#   CAP_SYS_RAWIO — open /dev/mem to read/write the chipset MMIO RAPL register.
-#                   Dell hides a low package power cap there that the MSR view
-#                   cannot see; lifting it is the only way the Perf mission can
-#                   actually unleash the CPU. The daemon only ever touches the
-#                   PACKAGE_RAPL_LIMIT field at the MCHBAR — /dev/mem is otherwise
-#                   unused. A deliberate, scoped expansion of privilege.
-# Everything else is dropped — no CAP_DAC_OVERRIDE etc.; the profile/RAPL sysfs
-# nodes are root-writable by their own mode bits.
-CapabilityBoundingSet=CAP_CHOWN CAP_SYS_RAWIO
-AmbientCapabilities=CAP_CHOWN CAP_SYS_RAWIO
+# CAP_CHOWN is the ONLY capability the daemon keeps: it hands ownership of the
+# control socket and status file to the logged-in user, so the unprivileged pill
+# can read status and issue (SO_PEERCRED-gated) commands. Every other capability
+# is dropped — no CAP_DAC_OVERRIDE etc., the profile/RAPL nodes are root-writable
+# by their own mode bits so no override is needed. (We deliberately do NOT carry
+# CAP_SYS_RAWIO / open /dev/mem: poking chipset MMIO from a long-running root
+# service is too broad a privilege to justify — the hidden power cap is lifted via
+# BIOS thermal policy instead.)
+CapabilityBoundingSet=CAP_CHOWN
+AmbientCapabilities=CAP_CHOWN
 NoNewPrivileges=yes
 # Read-only filesystem; strict leaves /dev /proc /sys writable, so all the
 # daemon's levers under /sys still work: platform_profile, intel-rapl PL1, the
@@ -56,10 +52,8 @@ SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 # No network of any kind (daemon only binds an AF_UNIX socket):
 IPAddressDeny=any
-# No device access except the NVIDIA nodes nvidia-smi needs (GPU power control)
-# and /dev/mem for the chipset MMIO RAPL register (hidden package power cap):
+# No device access except the NVIDIA nodes nvidia-smi needs (GPU power control):
 DevicePolicy=closed
-DeviceAllow=/dev/mem rw
 DeviceAllow=/dev/nvidiactl rw
 DeviceAllow=/dev/nvidia0 rw
 DeviceAllow=/dev/nvidia-uvm rw

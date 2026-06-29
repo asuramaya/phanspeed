@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.20.0] — 2026-06-29
+
+### Changed (security)
+- **Removed all `/dev/mem` / MMIO RAPL control (v0.19.0) from the daemon.** Poking
+  chipset MMIO required `CAP_SYS_RAWIO` + `/dev/mem` on the long-running root
+  service — full physical-memory access 24/7, the heaviest privilege in the daemon
+  and the worst-case if it were ever compromised. The EC also re-asserts the hidden
+  cap every ~15 s, so it could never have been a fleeting one-shot. We chose the
+  tighter posture: **the daemon is back to `CAP_CHOWN`-only**, governs only the
+  MSR/sysfs PL1 (no special capability), and the hidden chipset power cap is lifted
+  via **BIOS thermal/power policy** (e.g. `dell-wmi-sysman` `ThermalManagement`)
+  instead. Trade-off: phanspeed no longer bypasses a vendor MMIO power cap itself.
+  The unit drops `CAP_SYS_RAWIO` and the `/dev/mem` device grant; status loses
+  `mmio_limit_w`/`mmio_locked` (`effective_limit_w` is again the MSR PL1).
+
 ## [0.19.0] — 2026-06-29
 
 ### Fixed

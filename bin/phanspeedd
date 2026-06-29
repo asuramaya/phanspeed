@@ -27,7 +27,6 @@ Config : /etc/phanspeed/config.json (hot-reloaded).
 import atexit
 import glob
 import json
-import mmap
 import os
 import shutil
 import signal
@@ -55,28 +54,13 @@ RAPL_GLOB = "/sys/class/powercap/intel-rapl:*"   # package domains live here
 PL_MIN_W = 8                                       # never cap below this (usability)
 PL_MAX_W = 250                                      # absolute sanity ceiling
 
-# Hidden chipset (MMIO) RAPL package limit. On Dell client platforms the BIOS sets
-# a second, lower PL1 here that the MSR/sysfs view (which can read a generous
-# 200 W) never reflects — the hardware obeys the MINIMUM of the two, so a 25 W
-# MMIO cap silently pins the package. We read/write it via /dev/mem at the chipset
-# MCHBAR; the daemon makes the MMIO limit track the MSR limit so the hidden cap can
-# never bind invisibly. Needs CAP_SYS_RAWIO (see the systemd unit).
-MCHBAR_CFG_OFF = 0x48        # PCI config offset of MCHBAR base in device 00:00.0
-MCHBAR_PKG_RAPL = 0x59A0     # PACKAGE_RAPL_LIMIT within MCHBAR (mirrors MSR 0x610)
-MCHBAR_PKG_UNIT = 0x5938     # PACKAGE_POWER_SKU_UNIT (power unit in low nibble)
-MCHBAR_BASE_DEFAULT = 0xFEDC0000   # fixed MCHBAR base on recent Intel client (10th gen+)
-DEVMEM = "/dev/mem"
-MCHBAR_CFG = "/sys/bus/pci/devices/0000:00:00.0/config"
-
-
-def _rapl_pl1_watts(reg, unit):
-    """Decode the PL1 field (bits 0-14) of a RAPL_LIMIT register into watts."""
-    return (reg & 0x7FFF) * unit
-
-
-def _rapl_with_pl1(reg, watts, unit):
-    """Return reg with its PL1 field set to watts (+enable bit), rest preserved."""
-    return (reg & ~0x7FFF) | (int(watts / unit) & 0x7FFF) | (1 << 15)
+# NOTE: Dell hides a lower package PL1 in a chipset MMIO register that the MSR/
+# sysfs view doesn't reflect (the hardware obeys the lower of the two). We
+# deliberately do NOT touch it: reaching it needs /dev/mem + CAP_SYS_RAWIO, far
+# too dangerous a privilege for a long-running root service to hold, and the EC
+# re-asserts it every ~15 s anyway. Lift that cap via the BIOS thermal/power
+# policy instead (e.g. dell-wmi-sysman ThermalManagement). phanspeed governs only
+# the MSR/sysfs PL1, which needs no special capability.
 
 # Turbo (Intel/AMD boost) and HWP energy/performance preference — extra,
 # always-optional CPU levers. Both are plain sysfs writes (no capability needed).
@@ -335,96 +319,6 @@ class Hardware:
             base = _read_int(os.path.join(d, "constraint_0_max_power_uw"))
             self.power_base_w = round(base / 1e6) if base else None
             break
-        self._discover_mmio_rapl()
-
-    # ---- hidden chipset (MMIO) RAPL package limit ---- #
-    def _mchbar_base(self):
-        """MCHBAR physical base. Reading it from PCI config offset 0x48 needs
-        CAP_SYS_ADMIN (only the first 64 bytes are readable without it), which we
-        deliberately don't carry — so fall back to the fixed Intel-client base.
-        The caller sanity-checks the mapped register before trusting it."""
-        try:
-            with open(MCHBAR_CFG, "rb") as f:
-                f.seek(MCHBAR_CFG_OFF)
-                raw = f.read(8)
-            if len(raw) == 8:
-                val = struct.unpack("<Q", raw)[0]
-                if val & 1:
-                    return val & 0x7FFFFF8000
-        except OSError:
-            pass
-        return MCHBAR_BASE_DEFAULT
-
-    def _discover_mmio_rapl(self):
-        """Map the chipset MCHBAR and locate the MMIO PACKAGE_RAPL_LIMIT. Degrades
-        silently (has_mmio_rapl=False) if /dev/mem is unavailable, the register
-        doesn't decode like a real RAPL limit, or it's firmware-locked."""
-        self._mmio = None            # live read/write mmap of the MCHBAR window
-        self._mmio_off = None        # byte offset of PACKAGE_RAPL_LIMIT in it
-        self._mmio_unit = 0.125      # power unit (W per LSB)
-        self._mmio_default = None    # as-found register value (restored on exit)
-        self.mmio_locked = False
-        base = self._mchbar_base()
-        try:
-            page = mmap.PAGESIZE
-            mapbase = base & ~(page - 1)
-            winoff = base - mapbase
-            fd = os.open(DEVMEM, os.O_RDWR | os.O_SYNC)
-            try:
-                mm = mmap.mmap(fd, winoff + 0x6000, mmap.MAP_SHARED,
-                               mmap.PROT_READ | mmap.PROT_WRITE, offset=mapbase)
-            finally:
-                os.close(fd)                        # mapping survives the close
-            pu = struct.unpack("<Q", mm[winoff + MCHBAR_PKG_UNIT:
-                                        winoff + MCHBAR_PKG_UNIT + 8])[0] & 0xF
-            unit = 1.0 / (1 << pu) if pu else 0.125
-            off = winoff + MCHBAR_PKG_RAPL
-            cur = struct.unpack("<Q", mm[off:off + 8])[0]
-            # Safety gate: only trust/write this if it decodes like a real RAPL
-            # limit (sane power unit + a plausible PL2). Guards against poking the
-            # wrong address if MCHBAR ever differs from the fixed base.
-            pl2 = ((cur >> 32) & 0x7FFF) * unit
-            if not (1 <= pu <= 6 and 10 <= pl2 <= 400):
-                mm.close()
-                log(f"MMIO RAPL at 0x{base:x} didn't validate (pu={pu}, "
-                    f"pl2={pl2:.0f}W) — using MSR PL1 only")
-                return
-            if (cur >> 63) & 1:                     # PL locked by firmware
-                mm.close()
-                self.mmio_locked = True
-                log("MMIO RAPL PL1 is firmware-locked — using MSR PL1 only")
-                return
-            self._mmio, self._mmio_off = mm, off
-            self._mmio_unit, self._mmio_default = unit, cur
-            log(f"MMIO RAPL PL1 control available (as-found "
-                f"{round(_rapl_pl1_watts(cur, unit))} W)")
-        except (OSError, ValueError, struct.error) as e:
-            log(f"MMIO RAPL unavailable ({e}) — using MSR PL1 only")
-            self._mmio = None
-
-    @property
-    def has_mmio_rapl(self):
-        return self._mmio is not None
-
-    def get_mmio_pl1_w(self):
-        if not self.has_mmio_rapl:
-            return None
-        v = struct.unpack("<Q", self._mmio[self._mmio_off:self._mmio_off + 8])[0]
-        return round(_rapl_pl1_watts(v, self._mmio_unit))
-
-    def _set_mmio_pl1_w(self, watts):
-        if not self.has_mmio_rapl:
-            return
-        o = self._mmio_off
-        cur = struct.unpack("<Q", self._mmio[o:o + 8])[0]
-        new = _rapl_with_pl1(cur, watts, self._mmio_unit)
-        if new != cur:
-            self._mmio[o:o + 8] = struct.pack("<Q", new)
-
-    def _restore_mmio_pl1(self):
-        if self.has_mmio_rapl and self._mmio_default is not None:
-            o = self._mmio_off
-            self._mmio[o:o + 8] = struct.pack("<Q", self._mmio_default)
 
     @property
     def has_power(self):
@@ -436,27 +330,17 @@ class Hardware:
         uw = _read_int(self.rapl_pl1)
         return round(uw / 1e6) if uw else None
 
-    def get_effective_power_w(self):
-        """The cap the hardware actually enforces = min(MSR/sysfs PL1, MMIO PL1)."""
-        vals = [v for v in (self.get_power_w(), self.get_mmio_pl1_w()) if v]
-        return min(vals) if vals else None
-
     def set_power_w(self, watts):
         if not self.has_power:
             return False
         watts = max(PL_MIN_W, min(PL_MAX_W, int(watts)))
-        # drive BOTH the MSR/sysfs PL1 and the hidden MMIO PL1 to the same value,
-        # so the chipset cap tracks intent instead of silently binding lower
-        ok = True
-        if self.get_power_w() != watts:
-            ok = _write(self.rapl_pl1, int(watts * 1_000_000))
-        self._set_mmio_pl1_w(watts)
-        return ok
+        if self.get_power_w() == watts:
+            return True
+        return _write(self.rapl_pl1, int(watts * 1_000_000))
 
     def restore_power(self):
         if self.has_power and self.power_default_uw:
             _write(self.rapl_pl1, self.power_default_uw)
-        self._restore_mmio_pl1()
 
     # ---- turbo / boost + HWP energy-perf preference (EPP) ---- #
     def _discover_cpu_pref(self):
@@ -1381,9 +1265,7 @@ class Daemon:
                 "power": {
                     "available": self.hw.has_power,
                     "limit_w": self.config.get("power_limit_w", 0),
-                    "effective_limit_w": self.hw.get_effective_power_w(),
-                    "mmio_limit_w": self.hw.get_mmio_pl1_w(),
-                    "mmio_locked": self.hw.mmio_locked,
+                    "effective_limit_w": self.hw.get_power_w(),
                     "auto": self.config.get("power_auto", False),
                     "floor_w": self.config.get("power_floor_w", 0),
                     "battery_w": self.config.get("battery_power_w", 0),
