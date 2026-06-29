@@ -124,6 +124,34 @@ assert cfg["mission"] == "endure" and cfg["intensity"] == 4
 assert cfg["endure_gpu_sleep"] is False and cfg["endure_trim"] is True
 print("legit values preserved OK")
 
+# --- fan-aware failsafe ----------------------------------------------------
+# Constants must stay sane: the relaxed (fan-ok) ceiling sits at/above the locked
+# config ceiling, and the debounce is at least one sample.
+assert m.EMERGENCY_FAN_OK_TEMP >= m.NUM_LIMITS["emergency_temp"][1], "fan-ok ceiling too low"
+assert m.EMERGENCY_DEBOUNCE >= 1, "debounce must be >= 1"
+
+
+class _FanStub:
+    def __init__(self, fans, rpm):
+        self.fans, self._rpm = fans, rpm
+
+    def read_rpm(self, idx):
+        return self._rpm.get(idx)
+
+
+_FanStub.cpu_fan_alive = m.Hardware.cpu_fan_alive
+# a spinning CPU fan is detected even if the video fan is idle
+assert _FanStub({"1": {"label": "CPU Fan"}, "2": {"label": "Video Fan"}},
+                {"1": 2500, "2": 0}).cpu_fan_alive() is True
+# a dead CPU fan (0 rpm) is NOT alive even when another fan spins
+assert _FanStub({"1": {"label": "CPU Fan"}, "2": {"label": "Video Fan"}},
+                {"1": 0, "2": 3000}).cpu_fan_alive() is False
+# unreadable rpm => treated as dead (conservative)
+assert _FanStub({"1": {"label": "CPU Fan"}}, {"1": None}).cpu_fan_alive() is False
+# no CPU-labelled fan => fall back to any fan
+assert _FanStub({"2": {"label": "Video Fan"}}, {"2": 2000}).cpu_fan_alive() is True
+print("fan-aware failsafe logic OK")
+
 if fails:
     print(f"\nFAILURES ({len(fails)}):")
     for f in fails[:20]:

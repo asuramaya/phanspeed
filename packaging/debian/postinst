@@ -19,6 +19,9 @@ if [ "$1" = configure ]; then
     systemctl enable --now phanspeed.service || true
     systemctl enable --now phanspeed-healthcheck.timer || true
     systemctl enable --now phanspeed-update.timer || true
+    # on upgrade, --now won't reload an already-running daemon, so the new code
+    # would sit inert until reboot — restart it so updates actually take effect
+    systemctl try-restart phanspeed.service || true
     echo "PhanSpeed installed. Enable the pill for your user with:"
     echo "    gnome-extensions enable phanspeed@local"
     echo "  (then log out/in once on Wayland), then auto-tune with:"

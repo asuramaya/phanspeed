@@ -85,8 +85,11 @@ def cmd_status(args):
     cpu = temps.get("coretemp:Package id 0") or temps.get("dell_ddv:CPU")
     mission = st.get("mission") or ""
     if mission in MISSIONS:
-        print(f"mission : {mission}  (intensity {st.get('intensity', 2)}/{INTENSITY_MAX})")
+        print(f"mission : {mission}  (intensity {st.get('intensity', 2)}/{INTENSITY_MAX})"
+              "  — owns profile/power/epp")
     line = f"profile : {st.get('active_profile')}  (mode {st.get('mode')})"
+    if mission in MISSIONS:
+        line += "  ← mission"
     if st.get("emergency"):
         line += "  ⚠ EMERGENCY"
     print(line)
@@ -107,9 +110,16 @@ def cmd_status(args):
         draw_s = f" · {round(draw)} W" if isinstance(draw, (int, float)) else ""
         print(f"dgpu    : {gpu['runtime_status']}{draw_s}")
     if p.get("available"):
-        cap = p.get("limit_w")
-        print(f"cpu pwr : {p.get('current_w')} W  (cap {cap or 'full'}"
-              f"{', auto' if p.get('auto') else ''}; battery {p.get('battery_w') or 'base'})")
+        # show the *programmed* PL1 (incl. a mission's cap), not just config intent
+        eff = p.get("effective_limit_w")
+        if eff is None:
+            eff = p.get("limit_w")
+        default = p.get("default_w")
+        full = not eff or (default and eff >= default)
+        cap_s = "full" if full else f"{eff} W"
+        src = " (mission)" if mission in MISSIONS and not full else ""
+        print(f"cpu pwr : cap {cap_s}{src}"
+              f"{', auto' if p.get('auto') else ''}  (battery {p.get('battery_w') or 'base'})")
     if cp.get("epp_available"):
         print(f"epp     : {cp.get('epp')}  (AC cfg {cp.get('epp_cfg') or 'auto'}, "
               f"battery {cp.get('battery_epp_cfg') or 'balance_power'})")

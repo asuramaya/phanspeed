@@ -84,6 +84,13 @@ RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
 # `intensity` (0..4) is how hard you lean into the active mission's objective.
 MISSIONS = ("cool", "perf", "endure")
 INTENSITY_MAX = 4
+# Software thermal failsafe. With a healthy CPU fan the chip is *meant* to touch
+# ~100 °C on boost bursts, so we only trip on a sustained runaway (a high ceiling
+# plus a debounce) to avoid thrashing the whole stance every poll. With no active
+# cooling (the dead CPU-fan scenario this failsafe was born for) we fall back to
+# the conservative, instant-trip configured emergency_temp.
+EMERGENCY_FAN_OK_TEMP = 99      # °C — trip point when a CPU fan is actually spinning
+EMERGENCY_DEBOUNCE = 3          # consecutive over-temp samples before tripping (fan ok)
 
 # Endure extra levers: discrete-GPU runtime PM + panel/keyboard trims.
 PCI_DEVICES = "/sys/bus/pci/devices"
@@ -503,6 +510,22 @@ class Hardware:
     def read_rpm(self, idx):
         return _read_int(self.fans[idx]["rpm"])
 
+    def cpu_fan_alive(self):
+        """True if a CPU-cooling fan is actually spinning. Prefer fans whose
+        label mentions the CPU; otherwise consider any fan. Used to relax the
+        software failsafe — the conservative low trip point only makes sense when
+        there is no active cooling (the dead-fan scenario it was born for)."""
+        all_rpm, cpu_rpm = [], []
+        for idx, f in self.fans.items():
+            r = self.read_rpm(idx)
+            if r is None:
+                continue
+            all_rpm.append(r)
+            if "cpu" in (f.get("label") or "").lower():
+                cpu_rpm.append(r)
+        pool = cpu_rpm or all_rpm
+        return any(r > 100 for r in pool)
+
     def max_crit_temp(self):
         vals = [self.read_temp(s) for s in self.crit_sensor_ids]
         vals = [v for v in vals if v is not None]
@@ -686,6 +709,7 @@ class Daemon:
         self.version = read_version()
         self.lock = threading.RLock()
         self.emergency = False
+        self._emerg_hits = 0           # consecutive over-temp samples (failsafe debounce)
         self.level = 1                 # current auto cooling level
         self.applied_profile = self.hw.get_profile()
         self.config = self.load_config()
@@ -732,10 +756,19 @@ class Daemon:
     def save_config(self):
         with self.lock:
             os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            data = json.dumps(self.config, indent=2)
+            # idempotent: if the on-disk file already matches, skip the write (and
+            # the log line) so a chatty client can't spam disk I/O or the journal.
+            try:
+                with open(CONFIG_PATH) as f:
+                    if f.read() == data:
+                        return
+            except OSError:
+                pass
             tmp = CONFIG_PATH + ".tmp"
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
             with os.fdopen(fd, "w") as f:
-                json.dump(self.config, f, indent=2)
+                f.write(data)
             os.replace(tmp, CONFIG_PATH)
         log("config saved")
 
@@ -903,14 +936,26 @@ class Daemon:
         self.power_balance()
         with self.lock:
             crit = self.hw.max_crit_temp()
-            hi, lo = self.config["emergency_temp"], self.config["emergency_clear_temp"]
+            # fan-aware failsafe: with a CPU fan spinning, only a *sustained*
+            # runaway near Tjmax should trip (high ceiling + debounce) so normal
+            # boost spikes to 100 °C don't thrash the stance. With no active
+            # cooling, fall back to the conservative configured trip, instantly.
+            fan_ok = self.hw.cpu_fan_alive()
+            if fan_ok:
+                hi, lo, need = EMERGENCY_FAN_OK_TEMP, EMERGENCY_FAN_OK_TEMP - 10, EMERGENCY_DEBOUNCE
+            else:
+                hi, lo, need = (self.config["emergency_temp"],
+                                self.config["emergency_clear_temp"], 1)
             if crit is not None:
-                if crit >= hi and not self.emergency:
-                    log(f"!! EMERGENCY {crit:.0f}°C >= {hi}°C — forcing max cooling")
+                self._emerg_hits = self._emerg_hits + 1 if crit >= hi else 0
+                if not self.emergency and self._emerg_hits >= need:
+                    log(f"!! EMERGENCY {crit:.0f}°C >= {hi}°C "
+                        f"(fan {'ok' if fan_ok else 'DEAD'}) — forcing max cooling")
                     self.emergency = True
-                elif crit <= lo and self.emergency:
+                elif self.emergency and crit <= lo:
                     log(f"emergency cleared {crit:.0f}°C <= {lo}°C")
                     self.emergency = False
+                    self._emerg_hits = 0
 
             battery = bool(self.config.get("battery_aware") and self.hw.on_battery())
             mission = self.config.get("mission", "")
@@ -1029,7 +1074,9 @@ class Daemon:
         self._set_cap([0, base, round(base * 0.8), round(base * 0.6),
                        round(base * 0.5)][i])
         self._set_turbo(False if i >= 3 else None)
-        self._set_epp(["", "", "balance_power", "power", "power"][i])
+        # cap cool's EPP at balance_power until the very top — full "power" pins
+        # the chip to ~1 GHz and feels broken for everyday use.
+        self._set_epp(["", "", "balance_power", "balance_power", "power"][i])
 
     def _mission_perf(self, i):
         """Unleash: max fans, more power + boost as intensity rises."""
@@ -1219,6 +1266,7 @@ class Daemon:
                 "power": {
                     "available": self.hw.has_power,
                     "limit_w": self.config.get("power_limit_w", 0),
+                    "effective_limit_w": self.hw.get_power_w(),
                     "auto": self.config.get("power_auto", False),
                     "floor_w": self.config.get("power_floor_w", 0),
                     "battery_w": self.config.get("battery_power_w", 0),
@@ -1241,6 +1289,7 @@ class Daemon:
                 },
                 "cpu_clamp": self.clamp_status(),
                 "mission": self.config.get("mission", ""),
+                "mission_active": bool(self.config.get("mission", "")),
                 "intensity": self.config.get("intensity", 2),
                 "endure": {
                     "gpu_sleep": self.config.get("endure_gpu_sleep", True),
@@ -1362,6 +1411,15 @@ class Daemon:
                         rejected.append(k)
                     else:
                         changes[k] = cv
+            # A mission owns the whole stance, so a raw stance knob and a mission
+            # are mutually exclusive. If the caller explicitly drives a raw knob,
+            # drop the active mission — otherwise the mission silently overrides
+            # the knob every control loop (the "I set Perf but it stays Cool" trap).
+            LEGACY_STANCE_KEYS = ("mode", "manual_profile", "power_limit_w",
+                                  "power_auto", "power_floor_w", "turbo", "epp")
+            if ("mission" not in changes and self.config.get("mission")
+                    and any(k in changes for k in LEGACY_STANCE_KEYS)):
+                changes["mission"] = ""
             with self.lock:
                 if changes and not self._rate_ok():
                     return {"ok": False, "error": "rate limited"}

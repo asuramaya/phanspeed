@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] — 2026-06-29
+
+### Fixed
+- **Fan-aware thermal failsafe — no more emergency thrash.** The software
+  emergency was tuned for the dead-CPU-fan era (low ceiling, instant trip,
+  whole-stance slam). On a working-fan i9 that legitimately touches 100 °C on
+  boost bursts, it tripped every poll and oscillated, crippling the machine.
+  Now: when a CPU fan is actually spinning, the failsafe only fires on a
+  *sustained* runaway (99 °C held for several samples); when no CPU fan spins it
+  falls back to the conservative, instant configured `emergency_temp`. The
+  hard-locked config ceiling is unchanged, so the dead-fan protection is intact.
+- **Missions no longer silently override a raw stance knob.** Setting `profile`,
+  `power`, `epp`, `turbo`, or `mode` (CLI or pill) now drops the active mission,
+  so the knob actually takes effect instead of being re-overridden every loop
+  (the "I set Perf but it stays Cool" trap).
+- **Cool mission is usable at intensity 3.** It no longer jumps to EPP `power`
+  (which pins the CPU near ~1 GHz); `power` is reserved for max intensity, with
+  `balance_power` below it.
+- **Status tells the truth about the power cap.** `cpu pwr` now shows the
+  *programmed* PL1 (including a mission's cap) and tags it `(mission)`, instead
+  of always reporting `cap full`. New status fields `power.effective_limit_w` and
+  `mission_active`.
+- **No more config-save spam.** `save_config` is idempotent — it skips the write
+  and the log line when the on-disk file already matches.
+- **Upgrades now restart the daemon.** The `.deb` postinst `try-restart`s
+  `phanspeed.service`, so an auto-update's new code takes effect immediately
+  instead of sitting inert until the next reboot.
+
 ## [0.17.0] — 2026-06-25
 
 ### Changed
