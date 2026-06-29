@@ -207,6 +207,7 @@ class PhanToggle extends QuickMenuToggle {
         this._eppItems = {};
         this._batteryItem = new PopupMenu.PopupSwitchMenuItem('Quiet on battery', false);
         this._batteryItem.connect('toggled', (_i, state) => {
+            if (this._syncing) return;   // ignore programmatic setToggleState echoes
             sendCmd({cmd: 'set', battery_aware: state});
             this._scheduleRefresh();
         });
@@ -231,6 +232,8 @@ class PhanToggle extends QuickMenuToggle {
             this._scheduleRefresh();
         });
         this._built = false;
+        this._syncing = false;   // true while refresh() pushes state into widgets,
+                                 // so their 'toggled' echoes don't loop back to the daemon
     }
 
     _updateAdvancedLabel() {
@@ -316,6 +319,7 @@ class PhanToggle extends QuickMenuToggle {
         this._powerItems = {};
         this._powerAutoItem = new PopupMenu.PopupSwitchMenuItem('Scale with temperature', false);
         this._powerAutoItem.connect('toggled', (_i, state) => {
+            if (this._syncing) return;   // ignore programmatic setToggleState echoes
             sendCmd({cmd: 'set', power_auto: state});
             this._scheduleRefresh();
         });
@@ -367,6 +371,7 @@ class PhanToggle extends QuickMenuToggle {
         if (pref.turbo_available) {
             this._turboItem = new PopupMenu.PopupSwitchMenuItem('Turbo boost', false);
             this._turboItem.connect('toggled', (_i, state) => {
+                if (this._syncing) return;   // ignore programmatic setToggleState echoes
                 sendCmd({cmd: 'set', turbo: state ? 'on' : 'off'});
                 this._scheduleRefresh();
             });
@@ -476,6 +481,15 @@ class PhanToggle extends QuickMenuToggle {
             this._refreshUpdate(null);   // updater is independent of the daemon
             return;
         }
+        this._syncing = true;
+        try {
+            this._applyStatus(st);
+        } finally {
+            this._syncing = false;
+        }
+    }
+
+    _applyStatus(st) {
         if (!this._built && Array.isArray(st.choices))
             this._buildProfiles(st.choices.filter(c => typeof c === 'string'));
 

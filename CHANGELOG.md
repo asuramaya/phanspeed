@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-06-29
+
+### Fixed
+- **Turbo was never a "dead-switch" — that was our own bug.** The v0.17.0
+  detection counted the daemon's *own* `no_turbo` writes (driven by a stale
+  `turbo: "off"` config) as the EC "reverting" turbo, then latched it off and hid
+  the pill switch. Proven false: with the daemon stopped, `no_turbo=0` holds and
+  all-core load runs 3.0–3.2 GHz (turbo works). `set_turbo` now only latches when
+  the firmware *rejects* the write (turbo genuinely disabled in BIOS).
+- **Pill feedback loop killed.** On GNOME 50 the pill's `setToggleState` during a
+  refresh re-emitted `toggled`, so it pushed `turbo`/`battery`/`power_auto` back to
+  the daemon every poll with no user action — the real source of the turbo
+  flip-flop, the config-save spam, and (with the v0.18 auto-clear) missions getting
+  wiped. The switch handlers now ignore programmatic updates (a `_syncing` guard).
+  metadata 13→14.
+- **Mission auto-clear narrowed to the profile knob.** Setting an explicit
+  `profile` still leaves the mission, but sub-knobs (turbo/epp/power) no longer do
+  — so a chatty client echoing them can never silently drop the active mission.
+
+### Added
+- **Lifts the hidden chipset (MMIO) power cap.** Dell sets a low package PL1 in
+  the chipset MCHBAR that the MSR/sysfs view (often 200 W) can't see — the
+  hardware obeys the lower of the two, so a ~25 W MMIO cap silently pins the CPU.
+  The daemon now reads/writes that register via `/dev/mem` and makes it track the
+  intended PL1, so the hidden cap can't bind invisibly. The **Perf mission now
+  truly unleashes** (raises the cap as intensity rises) instead of "releasing" to
+  Dell's conservative default; with turbo on this is ~+40% all-core on the
+  reference Precision 5770 (capped only by cooling). Degrades silently if
+  `/dev/mem` is unavailable or the register is firmware-locked. New status fields
+  `power.mmio_limit_w`, `power.mmio_locked`, and `effective_limit_w` now reflects
+  `min(MSR, MMIO)`. Needs the new `CAP_SYS_RAWIO` + `/dev/mem` grant in the unit
+  (a deliberate, scoped privilege expansion — see `systemd/phanspeed.service`).
+
 ## [0.18.0] — 2026-06-29
 
 ### Fixed

@@ -152,6 +152,23 @@ assert _FanStub({"1": {"label": "CPU Fan"}}, {"1": None}).cpu_fan_alive() is Fal
 assert _FanStub({"2": {"label": "Video Fan"}}, {"2": 2000}).cpu_fan_alive() is True
 print("fan-aware failsafe logic OK")
 
+# --- MMIO RAPL PL1 bit-math ------------------------------------------------
+# Real PACKAGE_RAPL_LIMIT register read off the Precision 5770 (PL1=25W, PL2=115W,
+# power unit 0.125 W). Decoding and re-encoding must be exact and lossless.
+U = 0.125
+REG = 0x0043839800df80c8
+assert round(m._rapl_pl1_watts(REG, U)) == 25, "PL1 decode"
+assert round(((REG >> 32) & 0x7FFF) * U) == 115, "PL2 (sanity of the fixture)"
+reg45 = m._rapl_with_pl1(REG, 45, U)
+assert round(m._rapl_pl1_watts(reg45, U)) == 45, "PL1 re-encode"
+assert (reg45 >> 15) & 1 == 1, "PL1 enable bit set"
+assert (reg45 >> 32) == (REG >> 32), "upper half (PL2/time windows) preserved"
+assert (reg45 >> 63) & 1 == (REG >> 63) & 1, "lock bit untouched"
+# round-trip a range of caps
+for w in (8, 25, 45, 64, 90, 200):
+    assert round(m._rapl_pl1_watts(m._rapl_with_pl1(REG, w, U), U)) == w, f"rt {w}"
+print("MMIO RAPL PL1 bit-math OK")
+
 if fails:
     print(f"\nFAILURES ({len(fails)}):")
     for f in fails[:20]:
