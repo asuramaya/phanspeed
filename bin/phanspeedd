@@ -103,6 +103,12 @@ INTENSITY_MAX = 4
 # the conservative, instant-trip configured emergency_temp — full protection.
 EMERGENCY_FAN_OK_TEMP = 105     # °C — unreachable under HW Tjmax throttle (fan ok)
 EMERGENCY_DEBOUNCE = 3          # consecutive over-temp samples before tripping (fan ok)
+# A real dead fan reads 0 rpm *persistently*; the Dell dell_smm RPM read is a slow
+# BIOS SMI call that can momentarily glitch to 0/unreadable under heavy all-core
+# load — exactly when the chip is at Tjmax. Believing one glitch would drop us to
+# the aggressive instant trip and fire a false emergency. So treat the fan as dead
+# only after this many *consecutive* dead reads.
+FAN_DEAD_DEBOUNCE = 4           # consecutive dead-fan reads before trusting it
 
 # Endure extra levers: discrete-GPU runtime PM + panel/keyboard trims.
 PCI_DEVICES = "/sys/bus/pci/devices"
@@ -258,6 +264,16 @@ def _read_int(path):
         return int(v)
     except (TypeError, ValueError):
         return None
+
+
+def _sticky_fan_ok(raw_alive, dead_streak, debounce):
+    """Debounce the 'is a CPU fan spinning?' signal. A truly dead fan reads 0 rpm
+    poll after poll; a transient SMI glitch reads 0 once. Return
+    (fan_ok, new_dead_streak): the fan counts as alive until it has read dead for
+    `debounce` consecutive polls, so one glitch can't drop us to the aggressive
+    failsafe trip."""
+    dead_streak = 0 if raw_alive else dead_streak + 1
+    return (dead_streak < debounce, dead_streak)
 
 
 def _write(path, value):
@@ -713,6 +729,7 @@ class Daemon:
         self.lock = threading.RLock()
         self.emergency = False
         self._emerg_hits = 0           # consecutive over-temp samples (failsafe debounce)
+        self._fan_dead_streak = 0      # consecutive dead-fan reads (glitch debounce)
         self.level = 1                 # current auto cooling level
         self.applied_profile = self.hw.get_profile()
         self.config = self.load_config()
@@ -943,7 +960,8 @@ class Daemon:
             # runaway near Tjmax should trip (high ceiling + debounce) so normal
             # boost spikes to 100 °C don't thrash the stance. With no active
             # cooling, fall back to the conservative configured trip, instantly.
-            fan_ok = self.hw.cpu_fan_alive()
+            fan_ok, self._fan_dead_streak = _sticky_fan_ok(
+                self.hw.cpu_fan_alive(), self._fan_dead_streak, FAN_DEAD_DEBOUNCE)
             if fan_ok:
                 hi, lo, need = EMERGENCY_FAN_OK_TEMP, EMERGENCY_FAN_OK_TEMP - 10, EMERGENCY_DEBOUNCE
             else:

@@ -158,6 +158,23 @@ assert _FanStub({"2": {"label": "Video Fan"}}, {"2": 2000}).cpu_fan_alive() is T
 # every burst (the v0.18→v0.21 thrash). Dead-fan path stays clamped at <=95.
 assert m.EMERGENCY_FAN_OK_TEMP > 100, "fan-ok trip dropped to/under Tjmax"
 assert m.NUM_LIMITS["emergency_temp"][1] <= 95, "dead-fan ceiling raised"
+# sticky fan-alive: one transient dead read (SMI glitch under load) must NOT flip
+# us to the aggressive dead-fan trip; a *persistent* dead fan eventually does.
+deb = m.FAN_DEAD_DEBOUNCE
+assert deb >= 2, "fan-dead debounce too small to absorb a glitch"
+ok, streak = m._sticky_fan_ok(True, 0, deb)
+assert ok and streak == 0
+# single glitch while previously alive -> still considered alive
+ok, streak = m._sticky_fan_ok(False, 0, deb)
+assert ok is True and streak == 1, (ok, streak)
+# a real dead fan reads 0 every poll -> after `deb` consecutive reads, believe it
+s = 0
+for _ in range(deb):
+    ok, s = m._sticky_fan_ok(False, s, deb)
+assert ok is False, f"persistent dead fan not detected after {deb} reads"
+# one good read resets the streak (fan recovered / glitch passed)
+ok, s = m._sticky_fan_ok(True, s, deb)
+assert ok is True and s == 0
 print("fan-aware failsafe logic OK")
 
 # ---- phanspeed doctor: read-only reporter logic ---- #

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.23.0] — 2026-06-30
+
+### Fixed
+- **A transient fan-RPM glitch no longer bypasses the v0.22.0 Tjmax fix.** Live
+  load-testing the v0.22.0 build showed it still firing a false emergency — but via
+  the *dead-fan* path (`100°C >= 95°C (fan DEAD)`), not the relaxed fan-ok path. The
+  cause: `cpu_fan_alive()` was evaluated fresh each poll, and the Dell `dell_smm`
+  RPM read (a slow BIOS SMI call) momentarily returns `0`/unreadable under heavy
+  all-core load — precisely when the chip is at Tjmax. One such glitch flipped the
+  fan to "dead" and dropped the failsafe to the aggressive instant 95 °C trip. The
+  fan-dead signal is now **debounced** (`FAN_DEAD_DEBOUNCE`, new `_sticky_fan_ok`):
+  a real dead fan reads 0 rpm persistently, so we only believe it after 4
+  consecutive dead reads; a single glitch is ignored and the fan-ok (105 °C, trust
+  hardware) path stays in effect. Regression test added.
+
 ## [0.22.0] — 2026-06-30
 
 ### Fixed
