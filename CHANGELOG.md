@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.24.0] — 2026-06-30
+
+### Fixed
+- **The daemon no longer wakes the dGPU — which was clamping the CPU on AC.**
+  Measured root cause of the "CPU stuck at 400 MHz–1.4 GHz for no reason" report:
+  with the dGPU **awake**, this laptop's marginal AC budget (130 W charger +
+  battery charging) leaves so little headroom that the EC asserts **BD PROCHOT**
+  and clamps the CPU hard — dGPU awake → ~1.4 GHz / 24 W, dGPU asleep → ~2.5 GHz /
+  44 W under the same load; no CPU lever (PL1/EPP/turbo/profile) moves it. The
+  daemon was polling `nvidia-smi` every 3 s to feed the pill's GPU widget, helping
+  keep the dGPU awake. `_gpu_status` now reads **only sysfs runtime-PM state** (no
+  nvidia-smi), and `_apply_gpu` no longer attempts the firmware-locked GPU power
+  cap (which required polling). Turbo Boost arbitrates CPU-vs-GPU power by design,
+  so we let it. The Endure dGPU-sleep lever is unchanged.
+
+### Changed
+- **Pill trimmed of duplicate and hardware-dead controls** (extension version 15,
+  needs a Wayland relogin): removed the **GPU power widget** (locked `-pl` + the
+  harmful polling), the **GPU temperature** readout, and the **duplicate raw
+  profile row** (`Cool/Quiet/Balanced/Perf` — `Cool`/`Perf` already exist as
+  missions). Fan RPM stays as a **passive readout only** (PWM is firmware-locked —
+  there is no fan control to offer). Kept: missions, intensity, clamp warning, CPU
+  temp, CPU power, turbo, energy preference, quiet-on-battery.
+
 ## [0.23.0] — 2026-06-30
 
 ### Fixed

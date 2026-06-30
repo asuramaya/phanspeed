@@ -187,17 +187,14 @@ class PhanToggle extends QuickMenuToggle {
         this._advancedBody = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._advancedBody);
 
-        // profile chips (raw platform_profile — picking one exits mission mode)
-        this._profileItems = {};
-        this._profileSection = new PopupMenu.PopupMenuSection();
-        this._advancedBody.addMenuItem(this._profileSection);
-        // power + gpu submenus (built lazily)
+        // CPU power submenu (built lazily). The legacy raw-profile row was removed
+        // — Cool/Perf already exist as missions above, so it was a duplicate; and
+        // the GPU power widget was removed (nvidia-smi -pl is firmware-locked here,
+        // and polling the dGPU to feed it wakes it and clamps the CPU).
         this._powerSection = new PopupMenu.PopupMenuSection();
         this._advancedBody.addMenuItem(this._powerSection);
         this._powerSub = null;
         this._powerItems = {};
-        this._gpuSub = null;
-        this._gpuItems = {};
         // turbo + energy preference
         this._cpuPrefSection = new PopupMenu.PopupMenuSection();
         this._advancedBody.addMenuItem(this._cpuPrefSection);
@@ -231,7 +228,6 @@ class PhanToggle extends QuickMenuToggle {
             sendCmd({cmd: 'set', mission: MISSIONS[(i + 1) % MISSIONS.length]});
             this._scheduleRefresh();
         });
-        this._built = false;
         this._syncing = false;   // true while refresh() pushes state into widgets,
                                  // so their 'toggled' echoes don't loop back to the daemon
     }
@@ -239,29 +235,6 @@ class PhanToggle extends QuickMenuToggle {
     _updateAdvancedLabel() {
         this._advancedToggle.label.clutter_text.set_markup(
             `<span foreground="${DIM}">⚙ Advanced  ${this._advancedOpen ? '⌄' : '›'}</span>`);
-    }
-
-    _buildProfiles(choices) {
-        this._profileSection.removeAll();
-        this._profileItems = {};
-        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const box = new St.BoxLayout({x_expand: true});
-        for (const name of choices) {
-            const btn = new St.Button({
-                label: PROFILE_LABEL[name] || name,
-                x_expand: true, can_focus: true, style: CHIP,
-            });
-            btn.connect('clicked', () => {
-                // picking a raw profile exits mission mode (legacy control)
-                sendCmd({cmd: 'set', mission: '', mode: 'manual', manual_profile: name});
-                this._scheduleRefresh();
-            });
-            box.add_child(btn);
-            this._profileItems[name] = btn;
-        }
-        row.add_child(box);
-        this._profileSection.addMenuItem(row);
-        this._built = true;
     }
 
     _buildMissions() {
@@ -338,29 +311,6 @@ class PhanToggle extends QuickMenuToggle {
         for (const w of presets)
             add(`${w} W`, w);
         this._powerSection.addMenuItem(this._powerSub);
-    }
-
-    _buildGpu(gpu) {
-        const min = Math.round(gpu.min_w || 1);
-        const max = Math.round(gpu.max_w || 1);
-        const presets = [...new Set([max, Math.round(max * 0.75),
-            Math.round(max * 0.5), min])].filter(w => w >= min && w <= max).sort((a, b) => b - a);
-        this._gpuSub = new PopupMenu.PopupSubMenuMenuItem('GPU power limit', true);
-        this._gpuSub.icon.icon_name = 'video-display-symbolic';
-        this._gpuItems = {};
-        const add = (label, w) => {
-            const it = new PopupMenu.PopupMenuItem(label);
-            it.connect('activate', () => {
-                sendCmd({cmd: 'set', gpu_power_limit_w: w});
-                this._scheduleRefresh();
-            });
-            this._gpuSub.menu.addMenuItem(it);
-            this._gpuItems[w] = it;
-        };
-        add('Max (default)', 0);
-        for (const w of presets)
-            add(`${w} W`, w);
-        this._powerSection.addMenuItem(this._gpuSub);
     }
 
     _buildCpuPref(pref) {
@@ -490,15 +440,10 @@ class PhanToggle extends QuickMenuToggle {
     }
 
     _applyStatus(st) {
-        if (!this._built && Array.isArray(st.choices))
-            this._buildProfiles(st.choices.filter(c => typeof c === 'string'));
-
         const power = isObj(st.power) ? st.power : {};
         if (!this._powerSub && power.available)
             this._buildPower(power);
         const gpuInfo = isObj(st.gpu) ? st.gpu : {};
-        if (!this._gpuSub && gpuInfo.available)
-            this._buildGpu(gpuInfo);
         const pref = isObj(st.cpu_pref) ? st.cpu_pref : {};
         if (!this._cpuPrefBuilt && (pref.turbo_available || pref.epp_available))
             this._buildCpuPref(pref);
@@ -511,7 +456,6 @@ class PhanToggle extends QuickMenuToggle {
         const temps = isObj(st.temps) ? st.temps : {};
         const clamp = isObj(st.cpu_clamp) ? st.cpu_clamp : {};
         const cpu = num(temps['coretemp:Package id 0'] ?? temps['dell_ddv:CPU']);
-        const gpuTemp = num(gpuInfo.temp) ?? num(temps['dell_ddv:Video']);
         const lbl = PROFILE_LABEL[profile] || profile || '—';
         const mission = (typeof st.mission === 'string' && MISSIONS.includes(st.mission))
             ? st.mission : '';
@@ -561,10 +505,6 @@ class PhanToggle extends QuickMenuToggle {
         this._intensityItems.forEach((b, i) =>
             b.set_style(i === intensity ? DOT_ON : DOT));
 
-        // profile chips: highlight the active one (only meaningful with no mission)
-        for (const [name, btn] of Object.entries(this._profileItems))
-            btn.set_style(!mission && name === profile ? CHIP_ON : CHIP);
-
         // clamp banner
         if (clamp.clamped) {
             this._clampItem.visible = true;
@@ -588,18 +528,6 @@ class PhanToggle extends QuickMenuToggle {
                     : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
             for (const [w, item] of Object.entries(this._powerItems))
                 item.setOrnament(!pauto && Number(w) === limit
-                    ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-        }
-        if (this._gpuSub) {
-            const cap = num(gpuInfo.cap_w) || 0;
-            const lim = num(gpuInfo.limit);
-            const draw = num(gpuInfo.draw);
-            this._gpuSub.label.text = cap > 0
-                ? `GPU power: ${cap} W`
-                : `GPU power: ${lim != null ? `${Math.round(lim)} W` : 'max'}${
-                    draw != null ? ` · ${Math.round(draw)} W draw` : ''}`;
-            for (const [w, item] of Object.entries(this._gpuItems))
-                item.setOrnament(Number(w) === cap
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
         if (this._turboItem) {
@@ -669,15 +597,14 @@ class PhanToggle extends QuickMenuToggle {
             this._sceneItem.label.text = '—';
         }
 
-        // colour-coded live readout
+        // colour-coded live readout: CPU temp + fan RPM (passive readout only —
+        // fan PWM is firmware-locked here, so there is no fan control to offer).
         const parts = [];
         if (cpu != null)
             parts.push(`CPU <span foreground="${tColor(cpu)}" font_weight="bold">${Math.round(cpu)}°</span>`);
-        if (gpuTemp != null)
-            parts.push(`GPU <span foreground="${tColor(gpuTemp)}" font_weight="bold">${Math.round(gpuTemp)}°</span>`);
         const fans = Object.values(isObj(st.fans) ? st.fans : {}).filter(isObj)
             .map(f => `${esc(String(f.label || 'Fan').replace(' Fan', ''))} `
-                + `<span foreground="${ACCENT}">${f.rpm ? f.rpm : 'off'}</span>`);
+                + `<span foreground="${DIM}">${f.rpm ? f.rpm : 'off'}</span>`);
         const markup = [parts.join('   '), fans.join('   ')].filter(s => s).join('   ·   ') || '—';
         this._tempItem.label.clutter_text.set_markup(`<span foreground="${DIM}">${markup}</span>`);
 

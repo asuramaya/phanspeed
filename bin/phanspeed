@@ -108,10 +108,8 @@ def cmd_status(args):
         extra = (f"  (in {inw:g}W, draw {draw:g}W)"
                  if inw is not None and draw is not None else "")
         print(f"balance : {bw:+g} W {arrow}{rem_s}{extra}")
-    if gpu.get("runtime_status"):
-        draw = gpu.get("draw")
-        draw_s = f" · {round(draw)} W" if isinstance(draw, (int, float)) else ""
-        print(f"dgpu    : {gpu['runtime_status']}{draw_s}")
+    if gpu.get("runtime_pm"):
+        print(f"dgpu    : {'asleep' if gpu.get('asleep') else (gpu.get('runtime_status') or '?')}")
     if p.get("available"):
         # show the *programmed* PL1 (incl. a mission's cap), not just config intent
         eff = p.get("effective_limit_w")

@@ -1167,29 +1167,15 @@ class Daemon:
             self._gpu_pm_dirty = False
 
     def _apply_gpu(self, emergency, battery):
-        """Cap the discrete GPU's power. Emergency/battery -> minimum; otherwise
-        the configured cap (0 = leave default). Re-asserts only when the GPU's
-        live enforced limit drifts from our target (e.g. it reset after runtime
-        power-gating), so nvidia-smi -pl runs only when actually needed."""
+        """No GPU power-capping: nvidia-smi -pl is firmware-locked on this class of
+        hardware (the cap was always a no-op), and *attempting* it means polling
+        the dGPU, which wakes it and steals the CPU's power budget. The one real
+        GPU lever — runtime-PM D3cold sleep — is driven by the Endure mission.
+        Persistence stays as an opt-in knob for desktops (off by default)."""
         g = self.hw.gpu
-        if not g.available or g.min_w is None:
-            return
-        if self.config.get("gpu_persistence") and not self._gpu_pm:
+        if (self.config.get("gpu_persistence") and not self._gpu_pm
+                and g.available):
             self._gpu_pm = g.set_persistence(True)
-        lim = self.config.get("gpu_power_limit_w", 0)
-        if emergency or battery:
-            target = int(g.min_w)
-        elif lim and lim > 0:
-            target = int(max(g.min_w, min(g.max_w, lim)))
-        elif self._gpu_dirty and g.default_w:
-            target = int(g.default_w)
-        else:
-            return
-        info = g.query()
-        cur = round(info["limit"]) if info and info.get("limit") is not None else None
-        if (cur is None or abs(cur - target) >= 1) and g.set_limit_w(target):
-            self._gpu_last_set = target
-            self._gpu_dirty = not (g.default_w and target == int(g.default_w))
 
     def _apply_power(self, emergency, battery=False):
         """Reassert the CPU power cap (0 = leave firmware default). During an
@@ -1329,24 +1315,17 @@ class Daemon:
             }
 
     def _gpu_status(self):
+        # Read ONLY the dGPU's runtime-PM state from sysfs — never poll nvidia-smi
+        # here. On this power-starved laptop, querying the dGPU keeps it awake,
+        # which steals the marginal AC power budget and makes the EC clamp the CPU
+        # hard (BD PROCHOT — measured: dGPU awake -> CPU ~1.4 GHz, asleep -> 2.5 GHz).
+        # The pill no longer shows live GPU telemetry, so there's nothing here that
+        # justifies waking it. Turbo Boost arbitrates CPU-vs-GPU power by design.
         g = self.hw.gpu
         rt = g.runtime_status()
-        if not g.available:
-            # nvidia-smi may be locked/absent yet we can still drive runtime PM
-            return {"available": False, "runtime_pm": g.has_runtime_pm,
-                    "runtime_status": rt, "asleep": rt == "suspended"}
-        info = g.query() or {}
         return {
-            "available": True,
+            "available": g.available,
             "name": g.name,
-            "temp": info.get("temp"),
-            "draw": info.get("draw"),
-            "util": info.get("util"),
-            "limit": info.get("limit"),
-            "min_w": g.min_w,
-            "max_w": g.max_w,
-            "default_w": g.default_w,
-            "cap_w": self.config.get("gpu_power_limit_w", 0),
             "runtime_pm": g.has_runtime_pm,
             "runtime_status": rt,
             "asleep": rt == "suspended",
