@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.22.0] — 2026-06-30
+
+### Fixed
+- **Emergency failsafe no longer thrashes a healthy chip at Tjmax.** On an i9-12900H
+  (and any modern mobile CPU) the *normal* sustained-load ceiling is Tjmax (~100 °C)
+  — the silicon throttles itself there in hardware, by design. The fan-ok software
+  trip sat at 99 °C, so any real workload pinned the package at 100 °C, tripped a
+  false "emergency," forced the cool profile + clamped PL1, cleared ~2 s later, and
+  repeated every minute or two (~20 trips overnight in the logs) — a redundant
+  software clamp fighting the hardware throttle, felt as periodic stutter. With a
+  CPU fan spinning we now **trust the hardware Tjmax throttle**: the fan-ok trip
+  moves to 105 °C (unreachable while the silicon caps at 100 °C), so it only fires
+  on a genuine sensor runaway. The dead-fan path is unchanged — instant trip at the
+  configured `emergency_temp` (hard-capped ≤95 °C), full protection intact.
+- **Don't poke `nvidia-smi` while the dGPU is runtime-suspended.** The telemetry
+  query (2 s timeout) ran in the control loop; on a sleeping GPU it could block the
+  whole poll for up to 2 s *and* wake the GPU, defeating the Endure sleep lever.
+  `query()` now returns early when `runtime_status == suspended`.
+
 ## [0.21.0] — 2026-06-29
 
 ### Added

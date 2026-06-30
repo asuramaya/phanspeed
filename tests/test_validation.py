@@ -153,6 +153,11 @@ assert _FanStub({"1": {"label": "CPU Fan"}, "2": {"label": "Video Fan"}},
 assert _FanStub({"1": {"label": "CPU Fan"}}, {"1": None}).cpu_fan_alive() is False
 # no CPU-labelled fan => fall back to any fan
 assert _FanStub({"2": {"label": "Video Fan"}}, {"2": 2000}).cpu_fan_alive() is True
+# regression: the fan-ok emergency trip must sit ABOVE Tjmax (~100 °C) so a chip
+# that normally runs at its 100 °C ceiling under load doesn't trip the failsafe
+# every burst (the v0.18→v0.21 thrash). Dead-fan path stays clamped at <=95.
+assert m.EMERGENCY_FAN_OK_TEMP > 100, "fan-ok trip dropped to/under Tjmax"
+assert m.NUM_LIMITS["emergency_temp"][1] <= 95, "dead-fan ceiling raised"
 print("fan-aware failsafe logic OK")
 
 # ---- phanspeed doctor: read-only reporter logic ---- #

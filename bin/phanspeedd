@@ -92,12 +92,16 @@ RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
 # `intensity` (0..4) is how hard you lean into the active mission's objective.
 MISSIONS = ("cool", "perf", "endure")
 INTENSITY_MAX = 4
-# Software thermal failsafe. With a healthy CPU fan the chip is *meant* to touch
-# ~100 °C on boost bursts, so we only trip on a sustained runaway (a high ceiling
-# plus a debounce) to avoid thrashing the whole stance every poll. With no active
+# Software thermal failsafe. With a healthy CPU fan the chip's normal operating
+# ceiling *is* Tjmax (~100 °C) — the silicon throttles itself there in hardware,
+# by design, under any sustained load. So a software "emergency" at/under Tjmax
+# just fights the hardware with a redundant clamp and thrashes the stance every
+# load burst. With a fan spinning we therefore trust the hardware Tjmax throttle
+# and set the trip ABOVE any reachable temperature: it only fires on a genuine
+# sensor runaway (cooling so gone the reading climbs past Tjmax). With no active
 # cooling (the dead CPU-fan scenario this failsafe was born for) we fall back to
-# the conservative, instant-trip configured emergency_temp.
-EMERGENCY_FAN_OK_TEMP = 99      # °C — trip point when a CPU fan is actually spinning
+# the conservative, instant-trip configured emergency_temp — full protection.
+EMERGENCY_FAN_OK_TEMP = 105     # °C — unreachable under HW Tjmax throttle (fan ok)
 EMERGENCY_DEBOUNCE = 3          # consecutive over-temp samples before tripping (fan ok)
 
 # Endure extra levers: discrete-GPU runtime PM + panel/keyboard trims.
@@ -636,6 +640,12 @@ class Gpu:
         now = time.monotonic()
         if self._cache is not None and now - self._cache_t < max_age:
             return self._cache
+        # Never poke nvidia-smi while the dGPU is runtime-suspended: the call can
+        # block for the full timeout (stalling the control loop) and can even wake
+        # the GPU, defeating the Endure sleep lever. A sleeping GPU has no
+        # telemetry worth waking it for — report it as asleep instead.
+        if self.runtime_status() == "suspended":
+            return None
         r = self._run(["--query-gpu=" + _GPU_FIELDS,
                        "--format=csv,noheader,nounits", "-i", "0"], timeout=2)
         if not r or r.returncode != 0 or not r.stdout.strip():
