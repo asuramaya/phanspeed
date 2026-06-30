@@ -160,6 +160,7 @@ One `phanspeed <verb>` entrypoint drives everything from a terminal:
 
 ```bash
 phanspeed status [--json]                      # profile, temp, power, EPP, battery
+phanspeed doctor [--json]                      # read-only firmware/thermal/watt-choke report
 phanspeed profile <quiet|balanced|cool|performance|auto>
 phanspeed power <WATTS|auto|full>              # CPU RAPL cap
 phanspeed epp <performance|…|power|auto>       # HWP energy preference

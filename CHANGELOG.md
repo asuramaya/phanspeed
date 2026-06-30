@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.21.0] — 2026-06-29
+
+### Added
+- **`phanspeed doctor` — a read-only firmware/thermal snapshot that changes
+  nothing.** One command to eyeball the box (handy after a reboot or a BIOS
+  change): phanspeed/daemon state, BIOS version, thermal mode (`platform_profile`
+  plus the staged `dell-wmi-sysman` `ThermalManagement`/`TurboMode` when run with
+  `sudo`), turbo, and per-fan rpm/ceiling with an EC-under-drive flag.
+- **A dedicated `WATT CHOKE` section** that verifies the cap which crippled the box
+  before won't bite again: whether phanspeed *itself* is limiting watts (effective
+  PL1 vs default, and which mission/intensity owns the cap), a live BD PROCHOT /
+  power-budget clamp check, the actual package watts sampled from RAPL (with
+  `sudo`), and a note that the hidden chipset cap is now BIOS-governed. Ends with a
+  one-line verdict (✓ clear / ⚠ a cap is active). Pure reader — adds no privilege;
+  degrades gracefully (prints a `sudo` hint) for the root-only firmware nodes.
+
 ## [0.20.0] — 2026-06-29
 
 ### Changed (security)

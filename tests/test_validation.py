@@ -7,8 +7,11 @@ sanitize_config + _coerce_num, asserting the safety invariants ALWAYS hold —
 in particular that the thermal failsafe can never be disabled. Runs in CI on
 every push/PR. Exit 0 = pass.
 """
+import contextlib
 import importlib.machinery as machinery
 import importlib.util as util
+import io
+import json
 import math
 import os
 import random
@@ -151,6 +154,55 @@ assert _FanStub({"1": {"label": "CPU Fan"}}, {"1": None}).cpu_fan_alive() is Fal
 # no CPU-labelled fan => fall back to any fan
 assert _FanStub({"2": {"label": "Video Fan"}}, {"2": 2000}).cpu_fan_alive() is True
 print("fan-aware failsafe logic OK")
+
+# ---- phanspeed doctor: read-only reporter logic ---- #
+ploader = machinery.SourceFileLoader("phanspeed_cli",
+                                     os.path.join(HERE, "bin", "phanspeed"))
+pcli = util.module_from_spec(util.spec_from_loader("phanspeed_cli", ploader))
+ploader.exec_module(pcli)
+
+# fan merge: two chips expose the same fans (one with labels, one with maxes);
+# the doctor must show each fan ONCE, with both its label and its ceiling.
+_orig_glob, _orig_readfile = pcli.glob.glob, pcli._readfile
+_FAN_FS = {
+    "/sys/class/hwmon/hwmon0/fan1_input": "1800",   # dell_smm: labels, no max
+    "/sys/class/hwmon/hwmon0/fan1_label": "CPU Fan",
+    "/sys/class/hwmon/hwmon0/fan2_input": "1700",
+    "/sys/class/hwmon/hwmon0/fan2_label": "Video Fan",
+    "/sys/class/hwmon/hwmon1/fan1_input": "1800",   # dell_ddv: maxes, no labels
+    "/sys/class/hwmon/hwmon1/fan1_max": "4200",
+    "/sys/class/hwmon/hwmon1/fan2_input": "1700",
+    "/sys/class/hwmon/hwmon1/fan2_max": "4200",
+}
+pcli.glob.glob = lambda pat: ([k for k in _FAN_FS if k.endswith("fan1_input")
+                               or k.endswith("fan2_input")]
+                              if "fan" in pat else [])
+pcli._readfile = lambda p: _FAN_FS.get(p)
+fans = pcli._fans_hwmon()
+pcli.glob.glob, pcli._readfile = _orig_glob, _orig_readfile
+assert fans == [("CPU Fan", 1800, 4200), ("Video Fan", 1700, 4200)], fans
+print("doctor fan-merge OK")
+
+# watt-choke verdict: a mission cap below default must trip the warning; an
+# unmanaged PL1 (effective == default) must read clear.
+def _doctor_json(status):
+    pcli._status = lambda: status
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        pcli.cmd_doctor(["--json"])
+    return json.loads(buf.getvalue())
+
+
+_capped = _doctor_json({"version": "x", "power": {
+    "available": True, "effective_limit_w": 27, "default_w": 45},
+    "mission": "cool", "intensity": 3})
+assert _capped["effective_w"] == 27 and _capped["default_w"] == 45, _capped
+assert _capped["mission"] == "cool"
+_clear = _doctor_json({"version": "x", "power": {
+    "available": True, "effective_limit_w": 200, "default_w": 200},
+    "cpu_clamp": {"clamped": False}})
+assert _clear["effective_w"] == 200 and not _clear["clamped"], _clear
+print("doctor watt-choke fields OK")
 
 if fails:
     print(f"\nFAILURES ({len(fails)}):")

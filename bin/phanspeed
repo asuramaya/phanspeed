@@ -7,6 +7,7 @@ Wraps the control socket and delegates to the helper binaries, so everything is
 reachable as `phanspeed <verb>` instead of a scatter of phanspeed-* commands.
 
   phanspeed status [--json]
+  phanspeed doctor [--json]                  read-only firmware/thermal/watt-choke report
   phanspeed mission <cool|perf|endure|off>   the three stances; off = legacy
   phanspeed survive                          shortcut for `mission endure`
   phanspeed intensity <0-4|+|->              lean within the active mission
@@ -18,10 +19,12 @@ reachable as `phanspeed <verb>` instead of a scatter of phanspeed-* commands.
   phanspeed version
   phanspeed help
 """
+import glob
 import json
 import os
 import socket
 import sys
+import time
 
 SOCK_PATH = "/run/phanspeed/control.sock"
 STATUS_PATH = "/run/phanspeed/status.json"
@@ -126,6 +129,212 @@ def cmd_status(args):
     if cp.get("turbo_available"):
         print(f"turbo   : {'on' if cp.get('turbo') else 'off'}")
     print(f"battery : {'yes' if st.get('on_battery') else 'no (AC)'}")
+
+
+def _readfile(path):
+    """Read a sysfs/text node, returning a stripped str. None if it can't be
+    read (absent, or 0600 root-only and we're an unprivileged user)."""
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _fw_attr(name):
+    """A dell-wmi-sysman BIOS attribute's current_value (root-readable only)."""
+    base = "/sys/class/firmware-attributes/dell-wmi-sysman/attributes"
+    return _readfile(f"{base}/{name}/current_value")
+
+
+def _fans_hwmon():
+    """[(label, rpm, max_rpm)] from hwmon — world-readable, no daemon needed.
+
+    The same physical fans are exposed by two chips here (dell_smm carries the
+    pretty labels, dell_ddv carries fanN_max); merge by index so each fan shows
+    once with both its label and its ceiling."""
+    devs = {}
+    for inp in sorted(glob.glob("/sys/class/hwmon/hwmon*/fan*_input")):
+        d = os.path.dirname(inp)
+        stem = inp[: -len("_input")]
+        rpm = _readfile(inp)
+        if rpm is None:
+            continue
+        try:
+            rpm = int(rpm)
+        except ValueError:
+            continue
+        mx = _readfile(stem + "_max")
+        try:
+            mx = int(mx) if mx else None
+        except ValueError:
+            mx = None
+        idx = os.path.basename(stem)  # e.g. "fan1"
+        devs.setdefault(d, {})[idx] = {
+            "rpm": rpm, "max": mx, "label": _readfile(stem + "_label")}
+    if not devs:
+        return []
+    # primary chip = the one exposing the most fanN_max (under-drive needs it)
+    primary = max(devs.values(),
+                  key=lambda fans: sum(1 for f in fans.values() if f["max"]))
+    # borrow human labels (e.g. "CPU Fan") from whichever chip carries them
+    nice = {}
+    for fans in devs.values():
+        for idx, f in fans.items():
+            lab = f["label"]
+            if lab and not lab.lower().startswith("fan"):
+                nice.setdefault(idx, lab)
+    out = []
+    for idx in sorted(primary):
+        f = primary[idx]
+        out.append((nice.get(idx) or f["label"] or idx, f["rpm"], f["max"]))
+    return out
+
+
+def _rapl_actual_w():
+    """Sample the package RAPL energy counter to get *actual* watts pulled right
+    now. energy_uj is root-only on modern kernels, so this returns None for an
+    unprivileged run (the doctor then just reports the programmed cap instead)."""
+    e = "/sys/class/powercap/intel-rapl:0/energy_uj"
+    a = _readfile(e)
+    if a is None:
+        return None
+    time.sleep(0.4)
+    b = _readfile(e)
+    try:
+        d = (int(b) - int(a)) / 1e6 / 0.4
+    except (TypeError, ValueError):
+        return None
+    return round(d, 1) if d >= 0 else None  # negative => counter wrapped
+
+
+def _doctor_data():
+    st = _status() or {}
+    p = st.get("power", {}) or {}
+    cp = st.get("cpu_pref", {}) or {}
+    clamp = st.get("cpu_clamp", {}) or {}
+    temps = st.get("temps", {}) or {}
+    cpu = temps.get("coretemp:Package id 0") or temps.get("dell_ddv:CPU")
+    eff = p.get("effective_limit_w")
+    default = p.get("default_w")
+    return {
+        "daemon": bool(st),
+        "version": st.get("version"),
+        "bios": _readfile("/sys/class/dmi/id/bios_version"),
+        "platform_profile": _readfile("/sys/firmware/acpi/platform_profile"),
+        "platform_profile_choices":
+            _readfile("/sys/firmware/acpi/platform_profile_choices"),
+        "bios_thermal": _fw_attr("ThermalManagement"),
+        "bios_turbo": _fw_attr("TurboMode"),
+        "no_turbo": _readfile("/sys/devices/system/cpu/intel_pstate/no_turbo"),
+        "turbo_runtime": cp.get("turbo"),
+        "turbo_available": cp.get("turbo_available"),
+        "cpu_temp": cpu,
+        "fans": _fans_hwmon(),
+        "power_available": p.get("available"),
+        "effective_w": eff,
+        "default_w": default,
+        "limit_w": p.get("limit_w"),
+        "actual_w": _rapl_actual_w(),
+        "clamped": clamp.get("clamped"),
+        "clamp_reason": clamp.get("reason"),
+        "cur_max_mhz": clamp.get("cur_max_mhz"),
+        "mission": st.get("mission") or "",
+        "intensity": st.get("intensity", 2),
+    }
+
+
+def cmd_doctor(args):
+    """Read-only firmware/thermal snapshot — pokes nothing privileged. The WATT
+    CHOKE section verifies the cap that crippled the box won't bite again:
+    whether phanspeed itself is limiting watts, and whether the firmware is."""
+    d = _doctor_data()
+    if "--json" in args:
+        print(json.dumps(d, indent=2))
+        return
+    root = os.geteuid() == 0
+
+    print("phanspeed doctor — read-only firmware/thermal snapshot "
+          "(changes nothing)\n")
+    dv = f"running (v{d['version']})" if d["daemon"] else "NOT running"
+    print(f"  phanspeed   : {dv}")
+    print(f"  BIOS        : {d['bios'] or '?'}")
+
+    pp = d["platform_profile"] or "?"
+    choices = d["platform_profile_choices"]
+    print(f"  thermal mode: {pp}  (platform_profile"
+          + (f"; choices: {choices}" if choices else "") + ")")
+    if d["bios_thermal"] is not None:
+        print(f"                {d['bios_thermal']}  "
+              "(BIOS ThermalManagement — applies on reboot)")
+    elif not root:
+        print("                └ run `sudo phanspeed doctor` to read the "
+              "staged BIOS ThermalManagement / TurboMode")
+
+    if d["turbo_available"] is False:
+        tline = "hidden (control unavailable / reverts)"
+    elif d["turbo_runtime"] is None and d["no_turbo"] is not None:
+        tline = "on" if d["no_turbo"] == "0" else "off"
+    else:
+        tline = "on" if d["turbo_runtime"] else "off"
+    extra = f", BIOS TurboMode={d['bios_turbo']}" if d["bios_turbo"] else ""
+    print(f"  turbo       : {tline}  (no_turbo={d['no_turbo']}{extra})")
+
+    if d["fans"]:
+        parts, underdriven = [], False
+        for label, rpm, mx in d["fans"]:
+            if mx:
+                parts.append(f"{label} {rpm}/{mx} rpm")
+                if rpm < mx * 0.95:
+                    underdriven = True
+            else:
+                parts.append(f"{label} {rpm} rpm")
+        flag = "  ⚠ EC under-driving" if underdriven else ""
+        print(f"  fans        : {' · '.join(parts)}{flag}")
+    if d["cpu_temp"] is not None:
+        print(f"  cpu temp    : {d['cpu_temp']:.0f}°C")
+
+    # ---- WATT CHOKE: the cap that crippled the box before ---- #
+    print("\nWATT CHOKE  (the cap that crippled it before)")
+    warn = False
+    eff, default = d["effective_w"], d["default_w"]
+    if not d["power_available"]:
+        print("  software cap: power control unavailable")
+    elif eff and default and eff < default:
+        warn = True
+        who = (f" — via mission {d['mission']}/{d['intensity']}"
+               if d["mission"] else " — via manual power cap")
+        print(f"  software cap: {eff} W (default {default} W){who}  ⚠")
+    else:
+        cap_s = f"{eff} W" if eff else "?"
+        print(f"  software cap: none — phanspeed is NOT limiting watts ✓ "
+              f"(PL1 {cap_s})")
+
+    if d["actual_w"] is not None:
+        print(f"  actual pkg  : {d['actual_w']} W now (RAPL)")
+    elif not root:
+        print("  actual pkg  : (run `sudo phanspeed doctor` to sample live "
+              "package watts)")
+
+    if d["clamped"]:
+        warn = True
+        mhz = f" to ~{d['cur_max_mhz']} MHz" if d["cur_max_mhz"] else ""
+        why = f" — {d['clamp_reason']}" if d["clamp_reason"] else ""
+        print(f"  live clamp  : CLAMPED{mhz}{why}  ⚠ (BD PROCHOT / power budget)")
+    else:
+        print("  live clamp  : none detected ✓ (no BD PROCHOT under current load)")
+
+    print("  hidden cap  : BIOS-governed (the MMIO lever was removed in v0.20 "
+          "for security).")
+    print("                Lift it via BIOS ThermalManagement; not "
+          "runtime-readable without /dev/mem.")
+
+    if warn:
+        print("\nverdict: ⚠ a watt cap is active right now — see the ⚠ lines "
+              "above.")
+    else:
+        print("\nverdict: ✓ watt choke clear — phanspeed isn't capping and no "
+              "live clamp detected.")
 
 
 def cmd_profile(args):
@@ -245,7 +454,8 @@ def main():
         return 0
     verb, rest = argv[0], argv[1:]
     handlers = {
-        "status": cmd_status, "profile": cmd_profile, "power": cmd_power,
+        "status": cmd_status, "doctor": cmd_doctor,
+        "profile": cmd_profile, "power": cmd_power,
         "epp": cmd_epp, "version": cmd_version,
         "mission": cmd_mission, "survive": cmd_survive, "intensity": cmd_intensity,
         "tune": lambda a: cmd_delegate("phanspeed-tune", a),
