@@ -8,4 +8,8 @@ Type=oneshot
 # Runs as root and installs a system package, so it can't be sandboxed like the
 # daemon. It's a short-lived oneshot and the only PhanSpeed component with
 # network access — the privileged control loop (phanspeedd) stays networkless.
-ExecStart=/usr/local/bin/phanspeed-update
+# --check makes the daily timer notify-only: it CHECKS and logs but never
+# installs unattended. Actual installs happen interactively via the pill's
+# pkexec prompt. (build-deb.sh rewrites /usr/local/bin -> /usr/bin for the .deb.)
+PrivateTmp=yes
+ExecStart=/usr/local/bin/phanspeed-update --check

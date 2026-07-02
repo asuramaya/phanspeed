@@ -422,9 +422,11 @@ def cmd_intensity(args):
 
 
 def cmd_delegate(binary, args):
-    path = f"/usr/local/bin/{binary}"
-    if not os.path.exists(path):
-        path = binary  # fall back to PATH
+    path = binary  # last resort: PATH lookup
+    for cand in (f"/usr/bin/{binary}", f"/usr/local/bin/{binary}"):
+        if os.path.exists(cand):
+            path = cand
+            break
     try:
         os.execvp(path, [binary, *args])
     except OSError as e:

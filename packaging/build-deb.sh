@@ -41,7 +41,7 @@ install -m 0644 "$SRC/extension/phanspeed@local/metadata.json" \
 
 # version marker (used by phanspeed-update as a dpkg-query fallback) + default config
 echo "$VER" > "$ROOT/usr/share/phanspeed/VERSION"
-install -m 0644 "$SRC/packaging/config.default.json" "$ROOT/etc/phanspeed/config.json"
+install -m 0600 "$SRC/packaging/config.default.json" "$ROOT/etc/phanspeed/config.json"
 
 # control + maintainer scripts
 sed "s/@VERSION@/$VER/" "$SRC/packaging/debian/control" > "$ROOT/DEBIAN/control"

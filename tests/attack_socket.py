@@ -128,6 +128,30 @@ for _ in range(3000):
     check_invariants(d.config, "randfuzz")
 print(f"   {len(HOSTILE)} hostile + 3000 random msgs, invariants held: {not fails}")
 
+# --------------------------------------------------- authorization fallback
+# The empty-allow_uids fallback must NOT authorize every logged-in session —
+# only root + the single seat owner (the uid the socket is chowned to).
+print("== allow_uids fallback narrowing ==")
+d.config["allow_uids"] = [1000]
+au = d.allowed_uids()
+if au != {0, 1000}:
+    fails.append(f"explicit allow_uids widened to {au}")
+if 4242 in au:
+    fails.append("explicit allow_uids leaked a foreign uid")
+_orig_target = d._status_target_uid
+d.config["allow_uids"] = []
+d._status_target_uid = lambda: 4242          # simulate one seat owner
+au = d.allowed_uids()
+if au != {0, 4242}:
+    fails.append(f"empty allow_uids must trust root+owner only, got {au}")
+d._status_target_uid = lambda: None          # no seat owner -> root only
+au = d.allowed_uids()
+if au != {0}:
+    fails.append(f"empty allow_uids + no owner must be root-only, got {au}")
+d._status_target_uid = _orig_target
+d.config["allow_uids"] = [ME]                # restore for the socket tests below
+print(f"   empty allow_uids trusts root+owner only, never all sessions: {not fails}")
+
 # ---------------------------------------------------------------- socket layer
 print("== socket-level attacks ==")
 d._stop.clear()

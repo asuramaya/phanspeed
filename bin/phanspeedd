@@ -570,7 +570,14 @@ class Hardware:
 # --------------------------------------------------------------------------- #
 # Discrete NVIDIA GPU (optional, via nvidia-smi)
 # --------------------------------------------------------------------------- #
-NVIDIA_SMI = shutil.which("nvidia-smi")
+def _find_nvidia_smi():
+    for p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/bin/nvidia-smi"):
+        if os.access(p, os.X_OK):
+            return p
+    return shutil.which("nvidia-smi")
+
+
+NVIDIA_SMI = _find_nvidia_smi()
 _GPU_FIELDS = ("name,temperature.gpu,power.draw,utilization.gpu,"
                "enforced.power.limit,power.default_limit,"
                "power.min_limit,power.max_limit")
@@ -786,7 +793,7 @@ class Daemon:
             except OSError:
                 pass
             tmp = CONFIG_PATH + ".tmp"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as f:
                 f.write(data)
             os.replace(tmp, CONFIG_PATH)
@@ -794,18 +801,16 @@ class Daemon:
 
     # ---- authorization / rate limiting ---- #
     def allowed_uids(self):
-        """root + configured allow_uids; if none configured, fall back to any
-        user with an active login session (so the logged-in user just works)."""
+        """root + configured allow_uids. When none are configured, fall back to
+        root + the single seat owner (the lowest-uid human session, the same uid
+        the control socket is handed to) — NOT every logged-in session."""
         allowed = {0}
         cfg = self.config.get("allow_uids") or []
         allowed.update(cfg)
         if not cfg:
-            try:
-                for name in os.listdir("/run/systemd/users"):
-                    if name.isdigit():
-                        allowed.add(int(name))
-            except OSError:
-                pass
+            owner = self._status_target_uid()
+            if owner is not None:
+                allowed.add(owner)
         return allowed
 
     def _rate_ok(self):

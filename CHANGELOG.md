@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.25.0] — 2026-07-02
+
+Security-hardening release. A self-audit found the daemon's runtime sandbox is
+tight (verified live: uid 0 but `CapEff = cap_chown` only, `ProtectSystem=strict`,
+no network) — the real exposure was the **auto-update path** and a couple of
+least-privilege defaults. This release closes those.
+
+### Security
+- **Auto-update no longer installs unattended.** The daily root timer
+  (`phanspeed-update.timer`) now runs `phanspeed-update --check` — it only checks
+  and logs. Actual installs happen interactively through the pill's `pkexec`
+  prompt. This removes the daily unattended `dpkg -i` of a downloaded package as
+  root, which had the largest blast radius in the project.
+- **The updater fails closed on integrity.** It refuses to install unless the
+  release ships a `SHA256SUMS` asset with an entry for the exact `.deb` whose hash
+  matches. The old "no SHA256SUMS / no entry → install anyway" fallbacks are gone.
+  (This is still not a cryptographic signature — GPG/minisign signing remains a
+  planned step — but a missing or non-matching checksum can no longer slip
+  through.)
+- **Updater tempfile hardened against a `/tmp` symlink / TOCTOU attack.** The
+  download is written to an unpredictable `mkstemp()` file (O_EXCL, mode 0600)
+  instead of a predictable name in world-writable `/tmp`, and
+  `phanspeed-update.service` gains `PrivateTmp=yes`. A local user can no longer
+  pre-plant that path to make root write through a symlink or swap the file before
+  `dpkg`.
+- **The download size is capped (128 MiB)** so a compromised/MITM endpoint can't
+  OOM the machine.
+- **The control socket's empty-`allow_uids` fallback no longer trusts every
+  logged-in session.** With no `allow_uids` configured (the shipped default), the
+  daemon now authorizes only root + the single seat owner (the same uid the socket
+  is handed to) rather than every active login session. Locked in by a regression
+  test in `tests/attack_socket.py`.
+- **`/etc/phanspeed/config.json` now ships and is written mode 0600** (was 0644 in
+  the `.deb`, and the daemon relaxed it to 0644 on save).
+- **`nvidia-smi` is resolved from absolute paths** before falling back to `PATH`,
+  and the `phanspeed` CLI delegates to `/usr/bin` / `/usr/local/bin` explicitly
+  instead of a bare `PATH` lookup under `sudo` — removing PATH resolution as a root
+  exec vector.
+
 ## [0.24.0] — 2026-06-30
 
 ### Fixed
