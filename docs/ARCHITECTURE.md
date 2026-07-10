@@ -49,7 +49,7 @@ A `phanspeed-healthcheck.timer` restarts the daemon if it goes inactive or
 | `phanspeedd` | the root control-loop daemon (above) |
 | `phanspeed` | user CLI — one `phanspeed <verb>` entrypoint (status/profile/power/epp/tune/update/version) wrapping the socket; mirrors the sibling **kast** project's UX |
 | `phanspeed-tune` | closed-loop RAPL power **auto-tuner** (see [AUTOTUNE.md](AUTOTUNE.md)) — sweeps the cap under load, derives AC (perf knee) + battery (MHz/W knee) scenes |
-| `phanspeed-update` | self-updater — checks GitHub releases, verifies the `.deb` against `SHA256SUMS`, `dpkg -i`. Run daily by `phanspeed-update.timer`. The only networked component (the daemon stays `IPAddressDeny=any`) |
+| `phanspeed-update` | self-updater — checks GitHub releases, verifies the `.deb` against `SHA256SUMS` (fails closed), `dpkg -i`. `phanspeed-update.timer` runs it daily with `--check` only (notify, never installs unattended); actual installs are interactive, via the pill's `pkexec` prompt or an explicit run. The only networked component (the daemon stays `IPAddressDeny=any`) |
 | `phanspeed-healthcheck` | watchdog invoked by its timer |
 
 **Packaging:** `make deb` / `packaging/build-deb.sh` builds a `.deb` (dpkg-deb, no
@@ -84,15 +84,29 @@ hunts the PL1 cap toward net battery drain ≤ 0, plus **dGPU sleep** and panel/
 5. `_apply_cpu_pref` — drive turbo + EPP (emergency → off/`power`, battery →
    off/`battery_epp`, missions per their table, else config). A turbo write the
    firmware rejects is latched off so it doesn't retry/log-spam.
-6. `_apply_gpu` — set the GPU **cap** only when the live enforced limit drifts
-   from target (survives runtime power-gating without spamming `nvidia-smi -pl`).
-   Endure additionally drives the dGPU's PCI `power/control` to `auto` so it can
-   reach D3cold, and applies the panel/keyboard trims at high intensity.
+6. `_apply_gpu` — **persistence-only** as of v0.24.0: `nvidia-smi -pl` is
+   firmware-locked on this class of hardware (the cap was always a no-op), and
+   *attempting* it means polling the dGPU, which wakes it — see the BD PROCHOT
+   note below. The only thing this step still does is opt-in `gpu_persistence`
+   (`nvidia-smi -pm 1`, desktops). `_mission_endure` separately drives the
+   dGPU's PCI `power/control` to `auto` so it can reach D3cold, and applies the
+   panel/keyboard trims at high intensity. `gpu_power_limit_w` remains an
+   accepted/clamped config field for forward-compat with unlocked hardware but
+   is currently inert here.
 7. `write_status()` — publish the JSON snapshot (always, including emergencies),
    with `power_balance`, `mission`/`intensity`, the dGPU `runtime_status`, and
    `cpu_clamp`: per-core freq + busy% flagging a hardware power/PROCHOT clamp (top
    core pinned near the floor under load with thermal headroom — a USB-C power
    draw / weak charger / battery limit, not heat).
+
+**dGPU-awake → BD PROCHOT (found in v0.24.0):** on a power-starved AC budget
+(weak charger + battery charging), an *awake* dGPU alone can trip BD PROCHOT and
+clamp the CPU hard (~1.4 GHz vs ~2.5 GHz at the same load) — no CPU-side lever
+(PL1/EPP/turbo/profile) moves it, only dGPU runtime-PM state does. This is why
+`_gpu_status()` reads *only* sysfs `runtime_status`, never `nvidia-smi`, and why
+step 6 above dropped the GPU power-cap attempt: either would poll the dGPU and
+keep it awake. Turbo Boost 3.0 arbitrates CPU-vs-GPU power by design, so the
+daemon lets it rather than fighting it with an extra GPU-side clamp.
 
 On exit/crash the profile, CPU PL1, GPU limit, turbo, and EPP are restored to
 neutral defaults, and any Endure panel/kbd trim + forced dGPU runtime PM is undone.
@@ -116,6 +130,10 @@ The daemon is root with a world-reachable socket, so **every input is hostile**:
   `ProtectKernelTunables` and `ProcSubset=pid` are intentionally **off** —
   they'd block the `/sys` profile/RAPL writes and `/proc/stat` (clamp detection)
   respectively; other processes still stay hidden via `ProtectProc=invisible`.
+- `allow_uids`, when unset, falls back to root + the **single seat owner**
+  (`_status_target_uid`), not every logged-in session — verified live
+  (`CapEff=0x1`) and narrowed in a self-audit (v0.25.0), which also hardened
+  the separate, networked [update path](../SECURITY.md#update-path).
 
 ## Tests
 

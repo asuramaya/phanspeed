@@ -58,16 +58,24 @@ A Quick Settings pill that:
 - **Click the pill** → cycle the mission (Cool → Perf → Endure).
 - **Open ⚙ Advanced** → pick a raw profile (Quiet/Balanced/Cool/Performance),
   set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat) or
-  let it **scale power with temperature**, and see live CPU/GPU temps and fan RPM.
+  let it **scale power with temperature**, and see live CPU temp and fan RPM
+  (fan RPM is a passive readout only — PWM is firmware-locked, so there's no fan
+  control to offer).
 - **Quiet on battery** — optionally force a calm profile + low CPU power whenever
   you unplug.
-- **Discrete GPU** (NVIDIA, optional) — cap GPU power and see GPU temp / draw /
-  utilization in the pill.
 - Turns red on the **emergency override** (forced max cooling above 90 °C, which
   also drops the CPU to its base TDP to cut heat at the source).
 - **Update from the pill** — shows the running version, and an **⬆ Update to
   vX.Y.Z** item when a newer release is out (one-click install via a polkit
-  prompt). Packaged installs also self-update daily in the background.
+  prompt). The daily background timer only *checks* for that notice — it never
+  installs unattended; you click to install.
+
+There's deliberately no GPU power/temp widget: `nvidia-smi -pl` is firmware-locked
+on this class of hardware anyway, and polling the dGPU to show live numbers keeps
+it awake — which can starve the CPU's power budget under AC (see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the BD PROCHOT finding). The
+Endure mission still puts the dGPU to sleep when idle; it just doesn't poll it
+for a widget.
 
 ## Architecture
 
@@ -100,19 +108,26 @@ surface — it binds only an `AF_UNIX` socket).
   *and* on config load (a tampered config can't weaken safety).
 - **DoS-resistant** — 64 KB read cap, per-command rate limiting, `/etc` written
   only on real change.
-- **Sandboxed unit** — zero capabilities, `ProtectSystem=strict`, read-only FS
-  except `/etc/phanspeed`, `IPAddressDeny=any`, `RestrictAddressFamilies=AF_UNIX`,
+- **Sandboxed unit** — exactly one capability (`CAP_CHOWN`, only to hand the
+  socket + status file to you), `ProtectSystem=strict`, read-only FS except
+  `/etc/phanspeed`, `IPAddressDeny=any`, `RestrictAddressFamilies=AF_UNIX`,
   `SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`, `ProtectProc`,
   private tmp/devices/keyring. (`ProtectKernelTunables` is intentionally off — it
   would block the `/sys` profile write.)
-- **Least disclosure** — `status.json` is `0640` owner+root, not world-readable.
+- **Least disclosure** — `status.json` is `0640` owner+root, `config.json` is
+  `0600` root-only, neither world-readable.
+- **The auto-updater is hardened separately** (it's the one component with
+  network access — see [SECURITY.md](SECURITY.md)): the daily timer only
+  *checks*, never installs unattended; installs fail closed on a missing/
+  mismatched checksum; downloads land in an unpredictable, non-symlinkable temp
+  file.
 
 Adversarial tests live in `tests/attack_socket.py` (fuzzes the handler + socket,
 asserts the failsafe invariants always hold). Run: `python3 tests/attack_socket.py`.
 
 ## Install
 
-**Option A — `.deb` (recommended; gets auto-updates):**
+**Option A — `.deb` (recommended; gets update notices):**
 
 ```bash
 sudo apt install ./phanspeed_*.deb        # from a GitHub release, or `make deb`
@@ -120,11 +135,15 @@ gnome-extensions enable phanspeed@local   # then log out/in once (Wayland)
 ```
 
 The package installs the daemon, healthcheck, auto-tuner, the system-wide
-extension, and an **auto-update** timer (`phanspeed-update.timer`, daily) that
-pulls newer releases from GitHub and installs them — verifying the download's
-SHA256 against the release's `SHA256SUMS`. Disable it any time with
-`sudo systemctl disable --now phanspeed-update.timer`. (HTTPS + checksum is
-transport/corruption integrity, not a GPG signature — signing is planned.)
+extension, and a daily **update-check** timer (`phanspeed-update.timer`) that
+looks for newer GitHub releases and surfaces an **⬆ Update to vX.Y.Z** notice in
+the pill — it never installs anything unattended. Installing is a deliberate,
+interactive step: click the pill's update item (a `pkexec` prompt) or run `sudo
+phanspeed update` yourself. Either way the download is verified against the
+release's `SHA256SUMS` and the install is refused (fails closed) if that
+checksum is missing or doesn't match. (HTTPS + checksum is transport/corruption
+integrity, not a GPG signature — signing is planned.) Disable the check timer
+any time with `sudo systemctl disable --now phanspeed-update.timer`.
 
 **Option B — one-line install (fetches the latest release):**
 
@@ -141,8 +160,8 @@ cd phanspeed
 
 Either way, **log out and back in once** — Wayland has to restart the shell to
 load a brand-new extension. After that the pill is there permanently; no more
-logouts. (Auto-update is a `.deb`-only feature; source installs update via
-`git pull && ./install.sh`.)
+logouts. (The update-check timer is a `.deb`-only feature; source installs
+update via `git pull && ./install.sh`.)
 
 ## Files
 
@@ -165,7 +184,7 @@ phanspeed profile <quiet|balanced|cool|performance|auto>
 phanspeed power <WATTS|auto|full>              # CPU RAPL cap
 phanspeed epp <performance|…|power|auto>       # HWP energy preference
 phanspeed tune [--target both --apply]         # auto-tuner (needs sudo)
-phanspeed update [--check]                      # pull a newer release (.deb installs)
+phanspeed update [--check]                      # check/install a newer release (.deb only); the daily timer only checks
 phanspeed version
 ```
 
@@ -204,7 +223,7 @@ Edit `/etc/phanspeed/config.json` (then `sudo systemctl restart phanspeed`):
 | `turbo` | `auto` (leave alone) · `on` · `off` — force CPU turbo/boost; emergency/battery force it off |
 | `epp` | HWP energy/perf preference on AC (`performance`…`power`); `""` = leave alone |
 | `battery_epp` | EPP to use on battery; `""` = `balance_power` fallback |
-| `gpu_power_limit_w` | NVIDIA GPU power cap in W (via `nvidia-smi`); `0` = default |
+| `gpu_power_limit_w` | NVIDIA GPU power cap in W; accepted/clamped but **currently inert** — `nvidia-smi -pl` is firmware-locked on the hardware this was built for, and applying it would mean polling the dGPU awake (see the Security model note on the dGPU widget above). Kept for forward-compat with unlocked hardware. `0` = default |
 | `gpu_persistence` | enable `nvidia-smi -pm 1` (mainly for desktops; off by default) |
 
 Under `power_auto` the CPU cap ramps **smoothly** from the firmware default at
