@@ -33,36 +33,46 @@ is the ACPI **platform_profile**: `cool · quiet · balanced · performance`.
 drives that, with a temperature auto-policy on top (the closest thing to a fan
 curve the hardware allows).
 
-## Three missions
+## Two missions (+ one that still works, just not on the pill)
 
-PhanSpeed is one governor fighting the three things that cripple a laptop — you
-pick which fight it's in, and the pill re-skins to that mission's metric:
+PhanSpeed is one governor fighting the things that cripple a laptop — you pick
+which fight it's in, and the pill re-skins to that mission's metric:
 
-- 🧊 **Cool** — *survive heat*: cap watts at the source. (Born from a dead fan.)
-- 🔥 **Perf** — *unleash*: take everything the chassis allows. (Born from fixed fans.)
+- 🔥 **Perf** — *unleash*: take everything the chassis allows, including the
+  most aggressive cooling profile. (Born from fixed fans.)
 - 🔋 **Endure** — *survive power*: minimise draw to **live on a power trickle** —
   closed-loop CPU cap to **break-even**, dGPU sleep, panel/kbd trims, with a live
   `+2W ▲ / −8W ▼` balance gauge. (Born from a 20 W charger.)
 
-`phanspeed survive` / `phanspeed mission <cool|perf|endure>` + `phanspeed
+🧊 **Cool** (*survive heat*, born from a dead fan that's since been repaired)
+is still a fully working mission — `phanspeed mission cool` — it's just not a
+pill chip: Perf's own cooling-profile pick already covers the same ground
+mechanically (its max-cooling choice *is* the `cool` ACPI profile), so a third
+chip was a distinction without a difference.
+
+`phanspeed survive` / `phanspeed mission <perf|endure|cool>` + `phanspeed
 intensity <0-4>`, or the mission chips in the pill. Full design:
 [docs/MISSIONS.md](docs/MISSIONS.md).
 
 ## What you get
 
 A Quick Settings pill that:
-- A **mission chip row** (🧊 Cool · 🔥 Perf · 🔋 Endure) + an **intensity dial**;
-  the headline re-skins to temp / clock-watts / break-even per mission. Everything
-  else lives under one **⚙ Advanced** expander.
+- A **mission chip row** (🔥 Perf · 🔋 Endure) + an **intensity dial**; the
+  headline re-skins to clock-watts / break-even per mission. Everything else
+  lives under one **⚙ Advanced** expander.
 - Shows the active mission + its hero metric at a glance (icon changes per mission).
-- **Click the pill** → cycle the mission (Cool → Perf → Endure).
-- **Open ⚙ Advanced** → pick a raw profile (Quiet/Balanced/Cool/Performance),
-  set a **CPU power limit** (Intel RAPL PL1 — the real fix for sustained heat) or
-  let it **scale power with temperature**, and see live CPU temp and fan RPM
-  (fan RPM is a passive readout only — PWM is firmware-locked, so there's no fan
-  control to offer).
-- **Quiet on battery** — optionally force a calm profile + low CPU power whenever
-  you unplug.
+- **Click the pill** → cycle the mission (Perf → Endure).
+- **Open ⚙ Advanced**: while a mission is active, this is a **read-only status
+  view** (CPU power / turbo / energy preference as the mission has them right
+  now) plus a **"Leave mission"** action — editing these knobs while a mission
+  owns the stance would just get silently overwritten a few seconds later, so
+  the pill doesn't offer controls that don't do anything. Hit "Leave mission"
+  (or `phanspeed mission off`) to drop to manual mode, where the same rows
+  become a raw profile / CPU power limit (Intel RAPL PL1, fixed or scaled with
+  temperature) / turbo / energy-preference picker again, plus live CPU temp and
+  fan RPM (fan RPM is a passive readout only — PWM is firmware-locked).
+- **Quiet on battery** — a manual-mode-only knob; hidden while a mission is
+  active (missions handle their own battery behavior).
 - Turns red on the **emergency override** (forced max cooling above 90 °C, which
   also drops the CPU to its base TDP to cut heat at the source).
 - **Update from the pill** — shows the running version, and an **⬆ Update to

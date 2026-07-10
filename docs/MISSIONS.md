@@ -20,11 +20,25 @@ the original `mode`/`manual_profile` behaviour untouched.
 phanspeed mission endure       # pick the stance
 phanspeed intensity 4          # …and how hard
 phanspeed survive              # shortcut: mission endure
+phanspeed mission cool         # still fully valid — just not a pill chip
 phanspeed mission off          # back to legacy mode/profile control
 ```
 
-In the pill it's a **mission chip row** with an **intensity dial** beneath it,
-and the headline readout **re-skins to the active mission's metric**.
+**The pill only offers Perf and Endure as chips** (v0.26.0+). Cool remains a
+fully working daemon/CLI mission — `phanspeed mission cool` — it's just not
+surfaced in the pill: it was born from a dead fan that's since been repaired,
+and Perf's own fan-curve pick already covers the same ground mechanically (its
+max-cooling profile choice is literally `cool` — see below), so a third chip
+was a distinction without a difference for day-to-day use. The chip row shows
+an **intensity dial** beneath it, and the headline readout **re-skins to the
+active mission's metric**.
+
+While a mission is active, the pill's **Advanced** section is **read-only
+status**, not editable controls — a mission reasserts its own fixed power/
+turbo/EPP values every ~3 s poll, so an edit there would silently get
+overwritten a moment later. To go back to manual control, use the explicit
+**"Leave mission"** action in Advanced (or `phanspeed mission off`), then the
+same controls become editable again.
 
 ## 🧊 Cool — survive heat
 

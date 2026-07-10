@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.26.0] — 2026-07-10
+
+### Changed
+- **Pill simplified to two missions: 🔥 Perf and 🔋 Endure.** 🧊 Cool remains a
+  fully working daemon/CLI mission (`phanspeed mission cool`) — it's just no
+  longer a pill chip. It was born from a dead CPU fan that's since been
+  repaired, and mechanically Perf already picks the same aggressive cooling
+  profile as its fan-curve choice, so a third chip was a distinction without a
+  difference. Clicking the pill body now cycles Perf → Endure → Perf.
+- **The Advanced section is read-only while a mission is active.** Investigating
+  a live "am I leaving performance on the table" question surfaced a real
+  UX trap: a mission reasserts its own fixed power/turbo/EPP values every ~3 s
+  poll, so editing those knobs in Advanced while a mission owns the stance was
+  a silent no-op a few seconds later — indistinguishable from a broken control.
+  Advanced now shows CPU power / turbo / energy preference as plain status text
+  while a mission is active, with an explicit **"Leave mission"** action to drop
+  to manual mode, where the same rows become editable controls again. "Quiet on
+  battery" (a manual-mode-only knob missions never consult) is hidden the same
+  way. No daemon-side behavior changed — this is a pill-only (extension v16)
+  fix; a Wayland relogin is needed to pick it up.
+
 ## [0.25.0] — 2026-07-02
 
 Security-hardening release. A self-audit found the daemon's runtime sandbox is

@@ -62,8 +62,17 @@ source/one-line (`curl | bash`) path. `VERSION` is the single source of truth.
 The user-facing stance is one of three **missions** — `cool` / `perf` / `endure`
 — each owning the whole knob set (profile + PL1 + EPP + turbo + GPU) so you set
 one thing, not six. `intensity` (0–4) is how hard you lean in. An empty `mission`
-(`""`) falls back to the legacy `mode`/`manual_profile` path, fully intact. See
+(`""`) falls back to the legacy `mode`/`manual_profile` path, fully intact. All
+three remain valid daemon/CLI missions; **the pill (v0.26.0+) only offers `perf`
+and `endure` as chips** — `cool` is CLI/config-only (`phanspeed mission cool`),
+since Perf's own cooling-profile pick already covers the same ground. See
 [MISSIONS.md](MISSIONS.md) for the design and the per-intensity tables.
+
+While a mission owns the stance, the pill's Advanced section shows it
+**read-only** rather than editable — a mission reasserts its own turbo/EPP/PL1
+values every poll, so an edit there is a no-op a few seconds later. An explicit
+"Leave mission" action (or `phanspeed mission off`) is required before Advanced
+becomes editable again.
 
 `endure` is the one with genuinely new control logic: a **closed loop** that
 hunts the PL1 cap toward net battery drain ≤ 0, plus **dGPU sleep** and panel/kbd

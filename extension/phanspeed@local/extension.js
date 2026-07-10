@@ -37,9 +37,15 @@ const EPP_SHORT = {
 };
 const DEFAULT_ICON = 'power-profile-balanced-symbolic';
 
-// The three missions — the gestalt of the app. Each fights one of the things
-// that cripple a laptop and re-skins the pill's hero readout to its own metric.
+// The missions — the gestalt of the app. Each fights one of the things that
+// cripple a laptop and re-skins the pill's hero readout to its own metric.
+// `cool` stays a fully valid daemon/CLI mission (`phanspeed mission cool`) —
+// it's just not offered as a pill chip: it was born from a dead fan that's
+// since been repaired, and Perf's own fan-curve pick already covers it
+// mechanically (LEVEL_NAMES[2] prefers 'cool'), so a third chip was a
+// distinction without a difference for day-to-day use.
 const MISSIONS = ['cool', 'perf', 'endure'];
+const PILL_MISSIONS = ['perf', 'endure'];
 const MISSION_LABEL = {cool: '🧊 Cool', perf: '🔥 Perf', endure: '🔋 Endure'};
 const MISSION_ICON = {
     cool: 'power-profile-power-saver-symbolic',
@@ -187,10 +193,33 @@ class PhanToggle extends QuickMenuToggle {
         this._advancedBody = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._advancedBody);
 
+        // While a mission owns the stance, it reasserts its own fixed power/
+        // turbo/EPP values every poll — editing them here would silently get
+        // overwritten a few seconds later, which is exactly the "what does this
+        // slider even do" confusion the mission abstraction exists to prevent.
+        // So Advanced is read-only status while a mission is active; editing
+        // requires explicitly leaving the mission first.
+        this._missionStatusSection = new PopupMenu.PopupMenuSection();
+        this._advancedBody.addMenuItem(this._missionStatusSection);
+        this._powerStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._missionStatusSection.addMenuItem(this._powerStatusItem);
+        this._turboStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._missionStatusSection.addMenuItem(this._turboStatusItem);
+        this._eppStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._missionStatusSection.addMenuItem(this._eppStatusItem);
+        this._exitMissionItem = new PopupMenu.PopupMenuItem(
+            '↩ Leave mission (manual control)');
+        this._exitMissionItem.connect('activate', () => {
+            sendCmd({cmd: 'set', mission: ''});
+            this._scheduleRefresh();
+        });
+        this._missionStatusSection.addMenuItem(this._exitMissionItem);
+
         // CPU power submenu (built lazily). The legacy raw-profile row was removed
         // — Cool/Perf already exist as missions above, so it was a duplicate; and
         // the GPU power widget was removed (nvidia-smi -pl is firmware-locked here,
-        // and polling the dGPU to feed it wakes it and clamps the CPU).
+        // and polling the dGPU to feed it wakes it and clamps the CPU). These
+        // editable widgets are only shown when no mission is active — see above.
         this._powerSection = new PopupMenu.PopupMenuSection();
         this._advancedBody.addMenuItem(this._powerSection);
         this._powerSub = null;
@@ -222,10 +251,10 @@ class PhanToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._versionItem);
         this._updateLatest = null;     // latest version string when an update is available
 
-        // clicking the pill body cycles the mission: Cool → Perf → Endure → …
+        // clicking the pill body cycles the mission: Perf → Endure → Perf → …
         this.connect('clicked', () => {
-            const i = MISSIONS.indexOf(this._activeMission);   // '' → -1 → Cool
-            sendCmd({cmd: 'set', mission: MISSIONS[(i + 1) % MISSIONS.length]});
+            const i = PILL_MISSIONS.indexOf(this._activeMission);   // '' or 'cool' → -1 → Perf
+            sendCmd({cmd: 'set', mission: PILL_MISSIONS[(i + 1) % PILL_MISSIONS.length]});
             this._scheduleRefresh();
         });
         this._syncing = false;   // true while refresh() pushes state into widgets,
@@ -240,7 +269,7 @@ class PhanToggle extends QuickMenuToggle {
     _buildMissions() {
         const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         const box = new St.BoxLayout({x_expand: true});
-        for (const m of MISSIONS) {
+        for (const m of PILL_MISSIONS) {
             const btn = new St.Button({
                 label: MISSION_LABEL[m], x_expand: true, can_focus: true, style: CHIP,
             });
@@ -466,7 +495,12 @@ class PhanToggle extends QuickMenuToggle {
         this.iconName = (st.emergency || clamp.clamped)
             ? 'power-profile-performance-symbolic'
             : (mission ? MISSION_ICON[mission] : (PROFILE_ICON[profile] || DEFAULT_ICON));
-        this.checked = mission !== '';
+        const inMission = mission !== '';
+        this.checked = inMission;
+        // battery_aware is a legacy-only knob — missions ignore it entirely — so
+        // hide it while a mission is active rather than let it look live and do
+        // nothing (matches the read-only-while-missioned treatment below).
+        this._batteryItem.visible = !inMission;
         this._batteryItem.setToggleState(batteryAware);
 
         // subtitle (shown on the tile): the active mission re-skins it to its
@@ -498,7 +532,7 @@ class PhanToggle extends QuickMenuToggle {
         this.subtitle = sub;
 
         // mission chips: highlight active; intensity dots only while in a mission
-        for (const m of MISSIONS)
+        for (const m of PILL_MISSIONS)
             this._missionItems[m]?.set_style(m === mission ? CHIP_ON : CHIP);
         if (this._intensityRow)
             this._intensityRow.visible = mission !== '';
@@ -515,37 +549,53 @@ class PhanToggle extends QuickMenuToggle {
             this._clampItem.visible = false;
         }
 
+        // A mission reasserts its own fixed power/turbo/EPP values every poll, so
+        // editing these while one's active is a silent no-op a few seconds later.
+        // Swap to the read-only status rows + an explicit exit action instead.
+        this._missionStatusSection.actor.visible = inMission;
+
         if (this._powerSub) {
+            this._powerSub.visible = !inMission;
             const pauto = power.auto === true;
             const limit = num(power.limit_w) || 0;
             const cur = num(power.current_w);
             this._powerAutoItem.setToggleState(pauto);
-            if (pauto)
-                this._powerSub.label.text = `CPU power: auto${cur != null ? ` · ${cur} W` : ''}`;
-            else
-                this._powerSub.label.text = limit > 0
-                    ? `CPU power: ${limit} W`
-                    : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit');
+            const label = pauto
+                ? `CPU power: auto${cur != null ? ` · ${cur} W` : ''}`
+                : (limit > 0 ? `CPU power: ${limit} W`
+                    : (cur != null ? `CPU power: ${cur} W (default)` : 'CPU power limit'));
+            this._powerSub.label.text = label;
+            this._powerStatusItem.label.text = label;
             for (const [w, item] of Object.entries(this._powerItems))
                 item.setOrnament(!pauto && Number(w) === limit
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
+        this._powerStatusItem.visible = power.available === true;
+
         if (this._turboItem) {
-            // hide the switch entirely when turbo can't actually be controlled
-            // (firmware-locked or it won't hold) — a dead switch is worse than none
-            this._turboItem.visible = pref.turbo_available === true;
+            // hide the editable switch entirely when turbo can't actually be
+            // controlled (firmware-locked or it won't hold), or while a mission
+            // owns it — a dead/no-op switch is worse than none
+            this._turboItem.visible = pref.turbo_available === true && !inMission;
             this._turboItem.setToggleState(pref.turbo === true);
         }
+        this._turboStatusItem.visible = pref.turbo_available === true;
+        this._turboStatusItem.label.text = `Turbo boost: ${pref.turbo === true ? 'on' : 'off'}`;
+
         if (this._eppSub) {
+            this._eppSub.visible = !inMission;
             const eppCfg = typeof pref.epp_cfg === 'string' ? pref.epp_cfg : '';
             const eppCur = typeof pref.epp === 'string' ? pref.epp : null;
-            this._eppSub.label.text = eppCfg
+            const label = eppCfg
                 ? `Energy: ${EPP_LABEL[eppCfg] || eppCfg}`
                 : `Energy: auto${eppCur ? ` · ${EPP_LABEL[eppCur] || eppCur}` : ''}`;
+            this._eppSub.label.text = label;
+            this._eppStatusItem.label.text = label;
             for (const [val, item] of Object.entries(this._eppItems))
                 item.setOrnament(val === eppCfg
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
+        this._eppStatusItem.visible = !!this._eppSub;
 
         // headline readout — re-skinned to the active mission's hero metric
         if (mission === 'endure') {
