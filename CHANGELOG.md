@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.26.1] — 2026-07-11
+
+### Fixed
+- **Perf mission was being silently capped to ~25W by a power-limit register
+  the daemon never knew existed.** This CPU (12th-gen Alder Lake mobile)
+  exposes its package power limit through *two* independent hardware
+  registers — the legacy MSR interface and a separate MMIO interface — and
+  the silicon enforces whichever of the two is lower. `phanspeedd` had only
+  ever discovered and managed the MSR one (`/sys/class/powercap/intel-rapl:*`);
+  the MMIO one (`intel-rapl-mmio:*`) sat at its factory-conservative ~25W
+  default the entire time, silently overriding every mission's power cap
+  regardless of intensity — including Perf at max, which believed it was
+  running at 81W. `Hardware._discover_rapl`/`set_power_w`/`restore_power`
+  now discover and write both registers together. Confirmed live: sustained
+  CPU clock went from a 400 MHz firmware floor-clamp under real GPU+CPU load
+  to a clean 2.9–3.3 GHz with the same hardware, same charger, same load —
+  the earlier "underpowered charger" read on this was wrong, caught and
+  corrected mid-investigation once killing the daemon (which releases both
+  RAPL domains on exit) was reported to fix it instantly.
+
 ## [0.26.0] — 2026-07-10
 
 ### Changed

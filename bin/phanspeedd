@@ -51,6 +51,9 @@ PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
 CHOICES_PATH = "/sys/firmware/acpi/platform_profile_choices"
 
 RAPL_GLOB = "/sys/class/powercap/intel-rapl:*"   # package domains live here
+RAPL_MMIO_GLOB = "/sys/class/powercap/intel-rapl-mmio:*"  # 2nd, separately
+                                                  # enforced PL1 register — see
+                                                  # Hardware._discover_rapl
 PL_MIN_W = 8                                       # never cap below this (usability)
 PL_MAX_W = 250                                      # absolute sanity ceiling
 
@@ -323,10 +326,19 @@ class Hardware:
 
     # ---- RAPL CPU power limit (PL1) ---- #
     def _discover_rapl(self):
-        """Find the package RAPL domain and its writable PL1 node, if any."""
-        self.rapl_pl1 = None      # path to constraint_0_power_limit_uw
-        self.power_base_w = None  # spec/base TDP (W)
-        self.power_default_uw = None  # as-found PL1 to restore on exit
+        """Find the package RAPL domain(s) and their writable PL1 node(s).
+        Alder Lake+ mobile CPUs expose PL1 through two independent hardware
+        registers — the legacy MSR interface (intel-rapl) and a separate MMIO
+        interface (intel-rapl-mmio) — and the silicon enforces whichever of
+        the two is LOWER. Only managing the MSR one (as this used to) leaves
+        the MMIO one's own conservative factory default as the real, silent
+        ceiling no matter what the MSR side is set to. Both must be written
+        together."""
+        self.rapl_pl1 = None            # MSR: constraint_0_power_limit_uw
+        self.rapl_pl1_mmio = None       # MMIO: constraint_0_power_limit_uw
+        self.power_base_w = None        # spec/base TDP (W)
+        self.power_default_uw = None       # as-found MSR PL1, to restore on exit
+        self.power_default_uw_mmio = None  # as-found MMIO PL1, to restore on exit
         for d in sorted(glob.glob(RAPL_GLOB)):
             name = _read(os.path.join(d, "name")) or ""
             if not name.startswith("package"):
@@ -339,28 +351,49 @@ class Hardware:
             base = _read_int(os.path.join(d, "constraint_0_max_power_uw"))
             self.power_base_w = round(base / 1e6) if base else None
             break
+        for d in sorted(glob.glob(RAPL_MMIO_GLOB)):
+            name = _read(os.path.join(d, "name")) or ""
+            if not name.startswith("package"):
+                continue
+            pl1 = os.path.join(d, "constraint_0_power_limit_uw")
+            if not (os.path.exists(pl1) and os.access(pl1, os.W_OK)):
+                continue
+            self.rapl_pl1_mmio = pl1
+            self.power_default_uw_mmio = _read_int(pl1)
+            break
 
     @property
     def has_power(self):
         return self.rapl_pl1 is not None
 
     def get_power_w(self):
+        """The lower of the two domains — whichever the hardware is actually
+        enforcing right now, not just what the MSR side claims."""
         if not self.has_power:
             return None
-        uw = _read_int(self.rapl_pl1)
-        return round(uw / 1e6) if uw else None
+        vals = [v for v in (
+            _read_int(self.rapl_pl1),
+            _read_int(self.rapl_pl1_mmio) if self.rapl_pl1_mmio else None,
+        ) if v]
+        return round(min(vals) / 1e6) if vals else None
 
     def set_power_w(self, watts):
         if not self.has_power:
             return False
         watts = max(PL_MIN_W, min(PL_MAX_W, int(watts)))
-        if self.get_power_w() == watts:
-            return True
-        return _write(self.rapl_pl1, int(watts * 1_000_000))
+        uw = int(watts * 1_000_000)
+        ok = True
+        if _read_int(self.rapl_pl1) != uw:
+            ok = _write(self.rapl_pl1, uw) and ok
+        if self.rapl_pl1_mmio and _read_int(self.rapl_pl1_mmio) != uw:
+            ok = _write(self.rapl_pl1_mmio, uw) and ok
+        return ok
 
     def restore_power(self):
         if self.has_power and self.power_default_uw:
             _write(self.rapl_pl1, self.power_default_uw)
+        if self.rapl_pl1_mmio and self.power_default_uw_mmio:
+            _write(self.rapl_pl1_mmio, self.power_default_uw_mmio)
 
     # ---- turbo / boost + HWP energy-perf preference (EPP) ---- #
     def _discover_cpu_pref(self):
