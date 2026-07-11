@@ -1143,8 +1143,17 @@ class Daemon:
         cap) above the firmware default — 'release' would just fall back to Dell's
         conservative ~25 W. The chip self-limits thermally and the fan-aware
         failsafe is the backstop, so a high cap simply means 'run to the thermal
-        wall', not 'burn down'."""
-        self.hw.set_profile(self.hw.level_profile[2])
+        wall', not 'burn down'. Deliberately does NOT use level_profile[2]
+        (which picks 'cool' for its fan curve, shared with the Cool mission):
+        on this Dell EC, platform_profile also gates the discrete GPU's power
+        state, and 'cool' pins it to P8 (idle) regardless of load — silently
+        strangling any concurrent GPU workload on a shared machine. Perf's
+        whole point is unleashing, so it must never pick a profile named for
+        restraint; 'performance' gives the same aggressive fan response
+        without that side effect."""
+        perf_profile = ("performance" if "performance" in self.hw.choices
+                        else self.hw.level_profile[2])
+        self.hw.set_profile(perf_profile)
         base = self.hw.power_base_w or 45
         self._set_cap([base, round(base * 1.2), round(base * 1.4),
                        round(base * 1.6), round(base * 1.8)][i])

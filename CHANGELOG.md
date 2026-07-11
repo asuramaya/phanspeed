@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.26.2] — 2026-07-11
+
+### Fixed
+- **Perf mode's own fan-curve pick was silently pinning the discrete GPU to
+  its idle power state.** `_mission_perf` set `platform_profile` to the
+  literal ACPI profile `"cool"` — a choice made purely for its fan-RPM
+  response, shared with the Cool mission's own max-cooling table — without
+  knowing that on this Dell EC, `platform_profile` also gates the dGPU's
+  power state. `"cool"` pins the GPU to `pstate P8` (idle) regardless of
+  load; a concurrent GPU workload on the same machine looked "busy but slow"
+  (100% util, ~210 of 1665 MHz, ~16W) with no phanspeed-visible symptom,
+  since the daemon only ever read GPU power draw, never clocks/pstate. Cost
+  another team on the same shared box real time before being traced back to
+  a Perf-mode session left running here. Fix: Perf now explicitly prefers
+  the `"performance"` profile over the shared cooling table, never a profile
+  named for restraint. Verified live: GPU recovered to `P0`/1665 MHz/~38W
+  immediately, while CPU simultaneously held its full 81W Perf cap with no
+  clamp — both sides get their budget, no arbitration needed at the loads
+  tested.
+
 ## [0.26.1] — 2026-07-11
 
 ### Fixed
