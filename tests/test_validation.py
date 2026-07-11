@@ -226,6 +226,41 @@ _clear = _doctor_json({"version": "x", "power": {
 assert _clear["effective_w"] == 200 and not _clear["clamped"], _clear
 print("doctor watt-choke fields OK")
 
+# ---- wall-input plausibility (v0.28.0) ---- #
+# the real WD22TB4 numbers: reported 32.5W (bogus 5V x 6.5A), contract 126.75W
+# (19.5V x 6.5A), measured outflow ~90W → impossible, use the contract + latch
+r = m.plausible_in_w(32.5, 126.75, 90.0, False)
+assert r == (126.75, True, True), r
+# latched: keeps trusting the contract even when the floor drops (idle)
+r = m.plausible_in_w(32.5, 126.75, 5.0, True)
+assert r == (126.75, True, True), r
+# unproven at idle: reported covers the floor → keep it, no latch
+r = m.plausible_in_w(32.5, 126.75, 20.0, False)
+assert r == (32.5, False, False), r
+# a genuine weak 5V charger: battery drains under load → floor stays 0/None,
+# never falls back to the (over-optimistic) contract ceiling
+r = m.plausible_in_w(15.0, 60.0, 0, False)
+assert r == (15.0, False, False), r
+r = m.plausible_in_w(15.0, None, 50.0, False)
+assert r == (15.0, False, False), r
+print("wall-input plausibility OK")
+
+# ---- GPU-first cap arbitration (v0.28.0) ---- #
+# GPU eating 60W of a 127W budget → CPU cap yields to the leftover
+assert m.arbitrate_cap(81, 126.8, 60.0) == 51
+# leftover above the mission cap → mission cap stands
+assert m.arbitrate_cap(45, 126.8, 20.0) == 45
+# GPU idle/asleep (or below the engage threshold) → never shrinks the cap
+assert m.arbitrate_cap(81, 126.8, None) == 81
+assert m.arbitrate_cap(81, 126.8, 5.0) == 81
+# no wall budget (battery / unknown) → untouched
+assert m.arbitrate_cap(81, None, 60.0) == 81
+# pathological squeeze can never go below the usability floor
+assert m.arbitrate_cap(81, 40.0, 30.0) == m.PL_MIN_W
+# cap==0 means "release" — arbitration must not resurrect a cap
+assert m.arbitrate_cap(0, 126.8, 60.0) == 0
+print("GPU-first arbitration OK")
+
 if fails:
     print(f"\nFAILURES ({len(fails)}):")
     for f in fails[:20]:

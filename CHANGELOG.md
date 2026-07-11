@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.28.0] — 2026-07-11
+
+### Added
+- **GPU-first power arbitration in the Perf mission.** The stated priority for
+  this machine is "GPU eats first; the CPU makes do with the leftovers." While
+  the dGPU is genuinely drawing (≥10 W), Perf now shrinks the CPU's RAPL cap
+  each poll to the leftover wall budget (`budget − GPU draw − 15 W platform
+  overhead`, floored at the 8 W usability minimum) instead of blindly asserting
+  its intensity-table cap. This keeps a worst-case GPU-max + CPU-burst inside
+  what the charger contract can actually deliver, so the EC never answers an
+  over-budget draw with BD PROCHOT (a ~400 MHz hardware clamp far worse than
+  any cap the daemon would set). With the GPU idle or asleep the CPU keeps the
+  full mission cap — an idle system can never be starved by arbitration
+  (`arbitrate_cap()`, unit-tested). GPU draw is sampled through `Gpu.query()`'s
+  existing cache + runtime-suspended guard: no extra nvidia-smi calls, and a
+  sleeping GPU is still never woken.
+- `power_balance.budget_w` — the negotiated wall contract ceiling (per-supply
+  `voltage_max × current_now`, or `power_now` where available): the number the
+  EC actually budgets against, now exposed for the arbiter and the pill.
+
+### Fixed
+- **Bogus wall-input reading corrected by a physics check.** On docks whose EC
+  firmware answers the UCSI partner-source PDO query one slot shifted (a spec
+  violation — seen on the Dell WD22TB4: the kernel derives the contract voltage
+  from the wrong PDO, reporting 5 V instead of 19.5 V while the contract
+  current stays right), `in_w` sat at a flat, impossible 32.5 W. `power_balance`
+  now cross-checks: while the battery isn't draining, wall input must cover the
+  measured outflow (CPU package + GPU draw + battery charge rate); when the
+  reported figure can't and the negotiated ceiling can, the reading is
+  physically impossible and the contract figure is used instead
+  (`plausible_in_w()`, unit-tested, latched per contract since the firmware bug
+  is stable but the proof needs load). The pill and Endure readouts mark the
+  reconstructed figure with `~` (`in ~126.8W`), and `in_est` is exposed in
+  status. Genuine low-wattage 5 V chargers are unaffected: under load they
+  drain the battery, which keeps the check's floor at zero.
+
 ## [0.27.0] — 2026-07-11
 
 ### Added

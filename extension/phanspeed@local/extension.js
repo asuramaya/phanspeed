@@ -625,7 +625,7 @@ class PhanToggle extends QuickMenuToggle {
                 ? gpuInfo.runtime_status : null;
             const extra = [];
             if (inw != null)
-                extra.push(`in ${inw}W`);
+                extra.push(`in ${bal.in_est === true ? '~' : ''}${inw}W`);
             if (draw != null)
                 extra.push(`draw ${draw}W`);
             if (dgpu)
@@ -697,8 +697,13 @@ class PhanToggle extends QuickMenuToggle {
                 + `${gpuMhz != null ? ` @ ${Math.round(gpuMhz)}` : ''}`
                 + `${gpuMax ? `/${Math.round(gpuMax)}` : ''}MHz</span>`);
         }
-        if (inW != null)
-            pParts.push(`in <span foreground="${DIM}">${inW}W</span>`);
+        if (inW != null) {
+            // '~' marks a reconstructed figure: the firmware's own wall reading
+            // failed the physics check, so the negotiated contract is shown
+            // instead (see plausible_in_w in the daemon).
+            const tilde = bal.in_est === true ? '~' : '';
+            pParts.push(`in <span foreground="${DIM}">${tilde}${inW}W</span>`);
+        }
         if (pParts.length)
             this._powerReadoutItem.label.clutter_text.set_markup(
                 `<span foreground="${DIM}">${pParts.join('   ·   ')}</span>`);

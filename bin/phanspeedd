@@ -56,6 +56,10 @@ RAPL_MMIO_GLOB = "/sys/class/powercap/intel-rapl-mmio:*"  # 2nd, separately
                                                   # Hardware._discover_rapl
 PL_MIN_W = 8                                       # never cap below this (usability)
 PL_MAX_W = 250                                      # absolute sanity ceiling
+PERF_WALL_OVERHEAD_W = 15   # wall budget the CPU cap must leave for the rest of
+                            # the platform (display, board, VRM losses)
+PERF_GPU_MIN_W = 10         # arbitrate CPU-vs-GPU only when the GPU is genuinely
+                            # drawing — an idle/asleep GPU never shrinks the CPU cap
 
 # NOTE: Dell hides a lower package PL1 in a chipset MMIO register that the MSR/
 # sysfs view doesn't reflect (the hardware obeys the lower of the two). We
@@ -277,6 +281,44 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     failsafe trip."""
     dead_streak = 0 if raw_alive else dead_streak + 1
     return (dead_streak < debounce, dead_streak)
+
+
+def plausible_in_w(reported_w, contract_w, floor_w, latched):
+    """Pick the believable wall-input wattage → (in_w, estimated, latched).
+
+    Some Dell EC firmware answers the UCSI partner-source PDO query one slot
+    shifted (a spec violation — offset 0 must be the first PDO), so the kernel
+    derives the contract VOLTAGE from the wrong PDO (5 V instead of 19.5 V on
+    the WD22TB4 dock) while the contract CURRENT stays right: the reported
+    input lands ~4x low. Physics check: while the battery isn't draining, wall
+    input must cover everything measured flowing out of it (floor_w = CPU pkg
+    + GPU draw + battery charge rate); if the reported figure can't and the
+    negotiated ceiling (voltage_max × current_now — fields that same firmware
+    reports correctly) can, the reading is impossible. The proof needs load,
+    but the firmware bug is stable per contract, so once proven it stays
+    latched for as long as the same contract is negotiated."""
+    if (contract_w and contract_w > reported_w
+            and reported_w + 2 < (floor_w or 0)):
+        latched = True
+    if latched and contract_w and contract_w > reported_w:
+        return contract_w, True, True
+    return reported_w, False, latched
+
+
+def arbitrate_cap(cap_w, budget_w, gpu_w,
+                  overhead_w=PERF_WALL_OVERHEAD_W, gpu_min_w=PERF_GPU_MIN_W):
+    """GPU-first power split for the Perf mission: the GPU takes what it takes,
+    the CPU cap shrinks to the leftover wall budget. The stated priority is
+    'GPU eats first, CPU makes do with what's left' — and it's also self-
+    defense: on this Dell EC an over-budget combined draw is answered with BD
+    PROCHOT, a ~400 MHz hardware clamp far worse than any cap we'd set
+    ourselves. Engages only while the GPU genuinely draws (>= gpu_min_w), so
+    an idle/asleep GPU — or a bogus low wall reading before the plausibility
+    latch has proof — can never starve a CPU-only workload."""
+    if not cap_w or not budget_w or gpu_w is None or gpu_w < gpu_min_w:
+        return cap_w
+    leftover = int(budget_w - gpu_w - overhead_w)
+    return max(PL_MIN_W, min(cap_w, leftover))
 
 
 def _write(path, value):
@@ -796,6 +838,8 @@ class Daemon:
         self._cpu_actual_w = None       # measured CPU package watts over the last poll
         self._bat_prev = None           # last (charge_uah, monotonic_t) for drain calc
         self._bat_w = None              # smoothed net battery power (+ charging)
+        self._gpu_w_ema = None          # smoothed dGPU draw (W) for the Perf arbiter
+        self._in_bad_key = None         # contract key of a proven-bogus wall reading
         self._balance = None            # last computed power_balance() snapshot
         self._endure_cap = None         # current closed-loop Endure CPU cap (W)
         self._trim_dirty = False        # have we dimmed the panel/kbd?
@@ -947,6 +991,7 @@ class Daemon:
         time, so repeated calls within a poll would skew the delta."""
         # --- input from any online source (USB-C PD / barrel / Mains) ---
         power_in, have_in = 0.0, False
+        contract_in, have_contract = 0.0, False
         for d in glob.glob("/sys/class/power_supply/*"):
             if _read(os.path.join(d, "type")) == "Battery":
                 continue
@@ -955,13 +1000,22 @@ class Daemon:
             pw = _read_int(os.path.join(d, "power_now"))
             if pw is not None:
                 power_in += pw / 1e6
+                contract_in += pw / 1e6
                 have_in = True
                 continue
             cur = _read_int(os.path.join(d, "current_now"))
             volt = _read_int(os.path.join(d, "voltage_now"))
+            vmax = _read_int(os.path.join(d, "voltage_max"))
             if cur and volt:
                 power_in += (cur / 1e6) * (volt / 1e6)
                 have_in = True
+                # negotiated ceiling: what the EC actually budgets against.
+                # voltage_max comes from a scan of the source's fixed PDOs, so
+                # it survives the shifted-PDO firmware bug that breaks
+                # voltage_now (see plausible_in_w).
+                contract_in += (cur / 1e6) * ((vmax or volt) / 1e6)
+                if vmax and vmax > volt:
+                    have_contract = True
         # --- battery: net power, signed (+ charging, − draining) ---
         bat_w = remaining_min = None
         sign, bd = self._bat_dir()
@@ -1010,10 +1064,25 @@ class Daemon:
         if bat_w is not None:
             self._bat_w = bat_w if self._bat_w is None else round(
                 0.6 * self._bat_w + 0.4 * bat_w, 1)
+        # --- wall-reading plausibility (see plausible_in_w) ---
+        gpu_w = self._sample_gpu_w()
+        in_est = False
+        if have_in and have_contract:
+            floor_w = ((self._cpu_actual_w or 0) + (gpu_w or 0)
+                       + max(0, self._bat_w or 0))
+            key = round(contract_in)
+            power_in, in_est, latched = plausible_in_w(
+                power_in, contract_in, floor_w, self._in_bad_key == key)
+            if latched:
+                self._in_bad_key = key
+        budget_w = (round(max(power_in, contract_in if have_contract else 0.0), 1)
+                    if have_in else None)
         draw = (round(power_in - self._bat_w, 1)
                 if have_in and self._bat_w is not None else None)
         self._balance = {
             "in_w": round(power_in, 1) if have_in else None,
+            "in_est": in_est,
+            "budget_w": budget_w,
             "battery_w": self._bat_w,
             "draw_w": draw,
             "remaining_min": remaining_min,
@@ -1021,6 +1090,25 @@ class Daemon:
             "breakeven": self._bat_w is not None and self._bat_w >= 0,
         }
         return self._balance
+
+    def _sample_gpu_w(self):
+        """Live dGPU draw for the power ledger — None when asleep/unavailable.
+        Rides Gpu.query()'s cache and its runtime-suspended guard, so this
+        never wakes a sleeping GPU and adds no nvidia-smi calls beyond the
+        status poll's own. Keeps a light EMA (self._gpu_w_ema) so the Perf
+        arbiter tracks the trend, not one sample's spike."""
+        g = self.hw.gpu
+        w = None
+        if g.available and g.runtime_status() != "suspended":
+            info = g.query()
+            if info and info.get("draw") is not None:
+                w = float(info["draw"])
+        if w is None:
+            self._gpu_w_ema = None
+        else:
+            self._gpu_w_ema = w if self._gpu_w_ema is None else round(
+                0.5 * self._gpu_w_ema + 0.5 * w, 1)
+        return w
 
     def apply_once(self):
         self._sample_busy()
@@ -1189,8 +1277,14 @@ class Daemon:
                         else self.hw.level_profile[2])
         self.hw.set_profile(perf_profile)
         base = self.hw.power_base_w or 45
-        self._set_cap([base, round(base * 1.2), round(base * 1.4),
-                       round(base * 1.6), round(base * 1.8)][i])
+        cap = [base, round(base * 1.2), round(base * 1.4),
+               round(base * 1.6), round(base * 1.8)][i]
+        # GPU-first: while the dGPU is genuinely drawing, shrink the CPU cap to
+        # the leftover wall budget so their combined draw stays inside what the
+        # charger contract can deliver (see arbitrate_cap).
+        cap = arbitrate_cap(cap, (self._balance or {}).get("budget_w"),
+                            self._gpu_w_ema)
+        self._set_cap(cap)
         self._set_turbo(None if i == 0 else True)
         self._set_epp(["", "balance_performance", "performance",
                        "performance", "performance"][i])
