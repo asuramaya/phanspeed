@@ -173,6 +173,15 @@ class PhanToggle extends QuickMenuToggle {
         this._clampItem = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._clampItem.visible = false;
         this._alertSection.addMenuItem(this._clampItem);
+        this._gpuClampItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._gpuClampItem.visible = false;
+        this._alertSection.addMenuItem(this._gpuClampItem);
+
+        // always-visible power readout — CPU/GPU actual watts + clocks, so a
+        // repeat of the platform_profile GPU-clamp incident (v0.26.2) is
+        // obvious at a glance instead of needing a shell to diagnose.
+        this._powerReadoutItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this.menu.addMenuItem(this._powerReadoutItem);
 
         // hero readout (re-skins per mission) + live temps/fans
         this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
@@ -539,7 +548,9 @@ class PhanToggle extends QuickMenuToggle {
         this._intensityItems.forEach((b, i) =>
             b.set_style(i === intensity ? DOT_ON : DOT));
 
-        // clamp banner
+        // clamp banners — CPU (power-budget floor-clamp) and GPU (pinned to
+        // an idle pstate despite real load, e.g. a platform_profile side
+        // effect: busy-but-slow, invisible to a power-draw-only reading).
         if (clamp.clamped) {
             this._clampItem.visible = true;
             this._clampItem.label.clutter_text.set_markup(
@@ -547,6 +558,15 @@ class PhanToggle extends QuickMenuToggle {
                 + ` — ${esc(clamp.reason || 'power limit')}</span>`);
         } else {
             this._clampItem.visible = false;
+        }
+        if (gpuInfo.clamped) {
+            this._gpuClampItem.visible = true;
+            const mhz = num(gpuInfo.clock_mhz), max = num(gpuInfo.max_clock_mhz);
+            this._gpuClampItem.label.clutter_text.set_markup(
+                `<span foreground="#ffbb33">⚠ GPU clamped at ${mhz != null ? Math.round(mhz) : '?'} MHz`
+                + `${max ? ` of ${Math.round(max)}` : ''} despite load — check platform_profile</span>`);
+        } else {
+            this._gpuClampItem.visible = false;
         }
 
         // A mission reasserts its own fixed power/turbo/EPP values every poll, so
@@ -657,6 +677,32 @@ class PhanToggle extends QuickMenuToggle {
                 + `<span foreground="${DIM}">${f.rpm ? f.rpm : 'off'}</span>`);
         const markup = [parts.join('   '), fans.join('   ')].filter(s => s).join('   ·   ') || '—';
         this._tempItem.label.clutter_text.set_markup(`<span foreground="${DIM}">${markup}</span>`);
+
+        // power readout: what's actually being drawn right now, not just the
+        // configured cap — the number that would have caught the platform_profile
+        // GPU-clamp incident (power draw alone looked "fine"; clock didn't).
+        const cpuW = num(power.actual_w);
+        const gpuW = num(gpuInfo.power_w), gpuMhz = num(gpuInfo.clock_mhz);
+        const gpuMax = num(gpuInfo.max_clock_mhz);
+        const inW = num(bal.in_w);
+        const pParts = [];
+        if (cpuW != null)
+            pParts.push(`CPU <span foreground="${ACCENT}">${cpuW}W</span>`);
+        if (gpuInfo.asleep) {
+            pParts.push(`GPU <span foreground="${DIM}">asleep</span>`);
+        } else if (gpuW != null || gpuMhz != null) {
+            const gc = gpuInfo.clamped ? '#ff5b5b' : ACCENT;
+            pParts.push(`GPU <span foreground="${gc}">`
+                + `${gpuW != null ? `${Math.round(gpuW)}W` : '?W'}`
+                + `${gpuMhz != null ? ` @ ${Math.round(gpuMhz)}` : ''}`
+                + `${gpuMax ? `/${Math.round(gpuMax)}` : ''}MHz</span>`);
+        }
+        if (inW != null)
+            pParts.push(`in <span foreground="${DIM}">${inW}W</span>`);
+        if (pParts.length)
+            this._powerReadoutItem.label.clutter_text.set_markup(
+                `<span foreground="${DIM}">${pParts.join('   ·   ')}</span>`);
+        this._powerReadoutItem.visible = pParts.length > 0;
 
         this.menu.setHeader(this.iconName, 'PhanSpeed', sub);
 

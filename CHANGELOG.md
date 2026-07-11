@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.27.0] — 2026-07-11
+
+### Added
+- **Live power/clock telemetry, visible on the pill.** The v0.26.1/v0.26.2
+  incidents both went undetected for hours because nothing surfaced actual
+  watts or clocks — status only showed the configured *cap*, not what was
+  really happening. Now shown on every poll:
+  - `power.actual_w` — real CPU package watts, measured from the RAPL energy
+    counter (a delta, not the cap value).
+  - `gpu.power_w` / `gpu.clock_mhz` / `gpu.max_clock_mhz` / `gpu.util_pct` /
+    `gpu.temp_c` — live GPU telemetry, reinstated in `_gpu_status()`. This
+    was deliberately removed in v0.24.0 to stop nvidia-smi polling from
+    waking a sleeping dGPU; the reinstated version reuses `Gpu.query()`'s
+    existing suspended-check guard, so a sleeping GPU is still never woken —
+    telemetry is only ever read from a GPU that's already awake.
+  - `gpu.clamped` — a GPU-side clamp detector mirroring the existing CPU
+    `cpu_clamp`: high utilization with clock pinned well below max is the
+    "busy but slow" signature that power-draw alone can't see (draw looked
+    "fine" at 16W/100% util during the v0.26.2 incident; only the clock told
+    the truth).
+  - Pill: a persistent CPU/GPU watts+clock readout row, and a GPU clamp
+    warning banner alongside the existing CPU one — both now visible without
+    needing a shell to diagnose.
+
 ## [0.26.2] — 2026-07-11
 
 ### Fixed

@@ -339,6 +339,8 @@ class Hardware:
         self.power_base_w = None        # spec/base TDP (W)
         self.power_default_uw = None       # as-found MSR PL1, to restore on exit
         self.power_default_uw_mmio = None  # as-found MMIO PL1, to restore on exit
+        self.energy_uj_path = None      # cumulative package energy counter (for actual W)
+        self.energy_max_range_uj = None  # counter wraps at this value
         for d in sorted(glob.glob(RAPL_GLOB)):
             name = _read(os.path.join(d, "name")) or ""
             if not name.startswith("package"):
@@ -350,6 +352,11 @@ class Hardware:
             self.power_default_uw = _read_int(pl1)
             base = _read_int(os.path.join(d, "constraint_0_max_power_uw"))
             self.power_base_w = round(base / 1e6) if base else None
+            eu = os.path.join(d, "energy_uj")
+            if os.path.exists(eu):
+                self.energy_uj_path = eu
+                self.energy_max_range_uj = _read_int(
+                    os.path.join(d, "max_energy_range_uj"))
             break
         for d in sorted(glob.glob(RAPL_MMIO_GLOB)):
             name = _read(os.path.join(d, "name")) or ""
@@ -613,7 +620,8 @@ def _find_nvidia_smi():
 NVIDIA_SMI = _find_nvidia_smi()
 _GPU_FIELDS = ("name,temperature.gpu,power.draw,utilization.gpu,"
                "enforced.power.limit,power.default_limit,"
-               "power.min_limit,power.max_limit")
+               "power.min_limit,power.max_limit,"
+               "clocks.sm,clocks.max.sm")
 
 
 class Gpu:
@@ -707,7 +715,7 @@ class Gpu:
         if not r or r.returncode != 0 or not r.stdout.strip():
             return None
         p = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
-        if len(p) < 8:
+        if len(p) < 10:
             return None
 
         def f(x):
@@ -716,7 +724,8 @@ class Gpu:
             except ValueError:
                 return None
         info = {"name": p[0], "temp": f(p[1]), "draw": f(p[2]), "util": f(p[3]),
-                "limit": f(p[4]), "default": f(p[5]), "min": f(p[6]), "max": f(p[7])}
+                "limit": f(p[4]), "default": f(p[5]), "min": f(p[6]), "max": f(p[7]),
+                "clock": f(p[8]), "max_clock": f(p[9])}
         self._cache, self._cache_t = info, now
         return info
 
@@ -783,6 +792,8 @@ class Daemon:
         self._epp_dirty = False         # have we changed the EPP preference?
         self._stat_prev = None          # last /proc/stat (idle, total) for busy%
         self._busy_pct = None           # CPU busy% over the last poll
+        self._energy_prev = None        # last (energy_uj, monotonic_t) for CPU watts
+        self._cpu_actual_w = None       # measured CPU package watts over the last poll
         self._bat_prev = None           # last (charge_uah, monotonic_t) for drain calc
         self._bat_w = None              # smoothed net battery power (+ charging)
         self._balance = None            # last computed power_balance() snapshot
@@ -876,6 +887,28 @@ class Daemon:
             return
         di, dt = idle - prev[0], total - prev[1]
         self._busy_pct = max(0.0, min(100.0, 100.0 * (1 - di / dt))) if dt > 0 else None
+
+    def _sample_cpu_power(self):
+        """Actual CPU package watts since the last call, from the RAPL energy
+        counter (energy_uj) — the cap fields only say what's ALLOWED, this is
+        what's really being drawn. Handles the counter wrapping at
+        max_energy_range_uj."""
+        if not self.hw.energy_uj_path:
+            self._cpu_actual_w = None
+            return
+        e = _read_int(self.hw.energy_uj_path)
+        now = time.monotonic()
+        if e is None:
+            self._cpu_actual_w = None
+            return
+        prev, self._energy_prev = self._energy_prev, (e, now)
+        if not prev:
+            self._cpu_actual_w = None
+            return
+        de, dt = e - prev[0], now - prev[1]
+        if de < 0 and self.hw.energy_max_range_uj:
+            de += self.hw.energy_max_range_uj
+        self._cpu_actual_w = round(de / 1e6 / dt, 1) if dt > 0 and de >= 0 else None
 
     def clamp_status(self):
         """Detect a hardware power clamp: under real load the top core is pinned
@@ -991,6 +1024,7 @@ class Daemon:
 
     def apply_once(self):
         self._sample_busy()
+        self._sample_cpu_power()
         self.power_balance()
         with self.lock:
             crit = self.hw.max_crit_temp()
@@ -1331,6 +1365,7 @@ class Daemon:
                     "floor_w": self.config.get("power_floor_w", 0),
                     "battery_w": self.config.get("battery_power_w", 0),
                     "current_w": self.hw.get_power_w(),
+                    "actual_w": self._cpu_actual_w,
                     "base_w": self.hw.power_base_w,
                     "min_w": PL_MIN_W,
                     "default_w": (round(self.hw.power_default_uw / 1e6)
@@ -1362,20 +1397,35 @@ class Daemon:
             }
 
     def _gpu_status(self):
-        # Read ONLY the dGPU's runtime-PM state from sysfs — never poll nvidia-smi
-        # here. On this power-starved laptop, querying the dGPU keeps it awake,
-        # which steals the marginal AC power budget and makes the EC clamp the CPU
-        # hard (BD PROCHOT — measured: dGPU awake -> CPU ~1.4 GHz, asleep -> 2.5 GHz).
-        # The pill no longer shows live GPU telemetry, so there's nothing here that
-        # justifies waking it. Turbo Boost arbitrates CPU-vs-GPU power by design.
+        # Read the dGPU's runtime-PM state from sysfs first — cheap, no
+        # subprocess. Gpu.query() itself refuses to touch nvidia-smi while the
+        # GPU is runtime-suspended (see its docstring), so calling it here
+        # never wakes a sleeping GPU; it only reads telemetry off one that's
+        # already awake, which is what let the platform_profile GPU-clamp
+        # incident (v0.26.2) go undetected for hours — nothing was watching
+        # GPU clocks, only power draw, which still looked "fine" at 16W/100%
+        # util while the GPU sat pinned at pstate P8.
         g = self.hw.gpu
         rt = g.runtime_status()
+        asleep = rt == "suspended"
+        info = None if asleep else g.query()
+        clock = info.get("clock") if info else None
+        max_clock = info.get("max_clock") if info else None
+        util = info.get("util") if info else None
+        clamped = bool(util is not None and util >= 50 and max_clock and clock
+                       and clock <= max_clock * 0.5)
         return {
             "available": g.available,
             "name": g.name,
             "runtime_pm": g.has_runtime_pm,
             "runtime_status": rt,
-            "asleep": rt == "suspended",
+            "asleep": asleep,
+            "power_w": info.get("draw") if info else None,
+            "clock_mhz": clock,
+            "max_clock_mhz": max_clock,
+            "util_pct": util,
+            "temp_c": info.get("temp") if info else None,
+            "clamped": clamped,
         }
 
     def handle_cmd(self, msg):
