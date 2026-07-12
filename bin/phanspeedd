@@ -283,24 +283,39 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     return (dead_streak < debounce, dead_streak)
 
 
-def plausible_in_w(reported_w, contract_w, floor_w, latched):
+def plausible_in_w(reported_w, contract_w, floor_w, latched, top_pdo=False):
     """Pick the believable wall-input wattage → (in_w, estimated, latched).
 
     Some Dell EC firmware answers the UCSI partner-source PDO query one slot
     shifted (a spec violation — offset 0 must be the first PDO), so the kernel
-    derives the contract VOLTAGE from the wrong PDO (5 V instead of 19.5 V on
-    the WD22TB4 dock) while the contract CURRENT stays right: the reported
-    input lands ~4x low. Physics check: while the battery isn't draining, wall
-    input must cover everything measured flowing out of it (floor_w = CPU pkg
-    + GPU draw + battery charge rate); if the reported figure can't and the
-    negotiated ceiling (voltage_max × current_now — fields that same firmware
-    reports correctly) can, the reading is impossible. The proof needs load,
-    but the firmware bug is stable per contract, so once proven it stays
-    latched for as long as the same contract is negotiated."""
-    if (contract_w and contract_w > reported_w
-            and reported_w + 2 < (floor_w or 0)):
+    derives the contract VOLTAGE from the wrong PDO while the contract CURRENT
+    stays right. How wrong the result looks depends on what sits one slot below
+    the negotiated PDO in that particular charger's list: on the WD22TB4 dock
+    it is the 5 V entry and the input reads ~4x low (absurd), on the 130 W
+    barrel it is an 18 V entry and the input reads 117 W instead of 130 W —
+    entirely believable, and so invisible to any physics check. Two detectors,
+    in order of strength:
+
+    top_pdo — the sink negotiated the source's FULL current (current_now ==
+    current_max), which is only possible against the source's top fixed PDO,
+    whose voltage is voltage_max by construction. So the contract is known
+    outright, no load and no inference needed; whatever voltage_now claims, if
+    it disagrees with voltage_max it is the shift talking.
+
+    physics — while the battery isn't draining, wall input must cover
+    everything measured flowing out of it (floor_w = CPU pkg + GPU draw +
+    battery charge rate). A reported figure that cannot, against a negotiated
+    ceiling (voltage_max × current_now) that can, is impossible. This one needs
+    load to prove, but the firmware bug is stable per contract, so once proven
+    it stays latched for as long as the same contract is negotiated.
+    """
+    if not contract_w or contract_w <= reported_w:
+        return reported_w, False, latched
+    if top_pdo:
+        return contract_w, True, latched
+    if reported_w + 2 < (floor_w or 0):
         latched = True
-    if latched and contract_w and contract_w > reported_w:
+    if latched:
         return contract_w, True, True
     return reported_w, False, latched
 
@@ -991,7 +1006,7 @@ class Daemon:
         time, so repeated calls within a poll would skew the delta."""
         # --- input from any online source (USB-C PD / barrel / Mains) ---
         power_in, have_in = 0.0, False
-        contract_in, have_contract = 0.0, False
+        contract_in, have_contract, top_pdo = 0.0, False, False
         for d in glob.glob("/sys/class/power_supply/*"):
             if _read(os.path.join(d, "type")) == "Battery":
                 continue
@@ -1006,6 +1021,7 @@ class Daemon:
             cur = _read_int(os.path.join(d, "current_now"))
             volt = _read_int(os.path.join(d, "voltage_now"))
             vmax = _read_int(os.path.join(d, "voltage_max"))
+            cmax = _read_int(os.path.join(d, "current_max"))
             if cur and volt:
                 power_in += (cur / 1e6) * (volt / 1e6)
                 have_in = True
@@ -1016,6 +1032,11 @@ class Daemon:
                 contract_in += (cur / 1e6) * ((vmax or volt) / 1e6)
                 if vmax and vmax > volt:
                     have_contract = True
+                    # full current from this source can only have been granted
+                    # by its top fixed PDO, and that PDO's voltage is
+                    # voltage_max — so the contract is pinned without guessing.
+                    if cmax and cur == cmax:
+                        top_pdo = True
         # --- battery: net power, signed (+ charging, − draining) ---
         bat_w = remaining_min = None
         sign, bd = self._bat_dir()
@@ -1072,7 +1093,8 @@ class Daemon:
                        + max(0, self._bat_w or 0))
             key = round(contract_in)
             power_in, in_est, latched = plausible_in_w(
-                power_in, contract_in, floor_w, self._in_bad_key == key)
+                power_in, contract_in, floor_w, self._in_bad_key == key,
+                top_pdo)
             if latched:
                 self._in_bad_key = key
         budget_w = (round(max(power_in, contract_in if have_contract else 0.0), 1)

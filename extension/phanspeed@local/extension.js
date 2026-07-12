@@ -8,6 +8,7 @@
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -181,6 +182,13 @@ class PhanToggle extends QuickMenuToggle {
         // repeat of the platform_profile GPU-clamp incident (v0.26.2) is
         // obvious at a glance instead of needing a shell to diagnose.
         this._powerReadoutItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        // CPU watts + GPU watts/clocks + wall input can outgrow the pill's
+        // width, and an ellipsis here silently eats a whole figure. Wrap
+        // instead; the parts glue their own words with NBSPs, so a wrap can
+        // only ever land on a separator.
+        this._powerReadoutItem.label.clutter_text.set_line_wrap(true);
+        this._powerReadoutItem.label.clutter_text.set_ellipsize(
+            Pango.EllipsizeMode.NONE);
         this.menu.addMenuItem(this._powerReadoutItem);
 
         // hero readout (re-skins per mission) + live temps/fans
@@ -685,28 +693,29 @@ class PhanToggle extends QuickMenuToggle {
         const gpuW = num(gpuInfo.power_w), gpuMhz = num(gpuInfo.clock_mhz);
         const gpuMax = num(gpuInfo.max_clock_mhz);
         const inW = num(bal.in_w);
+        const NB = '\u00a0';   // NBSP: keeps each figure whole when the row wraps
         const pParts = [];
         if (cpuW != null)
-            pParts.push(`CPU <span foreground="${ACCENT}">${cpuW}W</span>`);
+            pParts.push(`CPU${NB}<span foreground="${ACCENT}">${cpuW}W</span>`);
         if (gpuInfo.asleep) {
-            pParts.push(`GPU <span foreground="${DIM}">asleep</span>`);
+            pParts.push(`GPU${NB}<span foreground="${DIM}">asleep</span>`);
         } else if (gpuW != null || gpuMhz != null) {
             const gc = gpuInfo.clamped ? '#ff5b5b' : ACCENT;
-            pParts.push(`GPU <span foreground="${gc}">`
+            pParts.push(`GPU${NB}<span foreground="${gc}">`
                 + `${gpuW != null ? `${Math.round(gpuW)}W` : '?W'}`
-                + `${gpuMhz != null ? ` @ ${Math.round(gpuMhz)}` : ''}`
+                + `${gpuMhz != null ? `${NB}@${NB}${Math.round(gpuMhz)}` : ''}`
                 + `${gpuMax ? `/${Math.round(gpuMax)}` : ''}MHz</span>`);
         }
         if (inW != null) {
             // '~' marks a reconstructed figure: the firmware's own wall reading
-            // failed the physics check, so the negotiated contract is shown
-            // instead (see plausible_in_w in the daemon).
+            // was contradicted by the negotiated contract, so the contract is
+            // shown instead (see plausible_in_w in the daemon).
             const tilde = bal.in_est === true ? '~' : '';
-            pParts.push(`in <span foreground="${DIM}">${tilde}${inW}W</span>`);
+            pParts.push(`in${NB}<span foreground="${DIM}">${tilde}${inW}W</span>`);
         }
         if (pParts.length)
             this._powerReadoutItem.label.clutter_text.set_markup(
-                `<span foreground="${DIM}">${pParts.join('   ·   ')}</span>`);
+                `<span foreground="${DIM}">${pParts.join('  ·  ')}</span>`);
         this._powerReadoutItem.visible = pParts.length > 0;
 
         this.menu.setHeader(this.iconName, 'PhanSpeed', sub);

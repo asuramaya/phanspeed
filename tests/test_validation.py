@@ -243,6 +243,25 @@ r = m.plausible_in_w(15.0, 60.0, 0, False)
 assert r == (15.0, False, False), r
 r = m.plausible_in_w(15.0, None, 50.0, False)
 assert r == (15.0, False, False), r
+
+# ---- top-PDO detector (v0.28.1) ---- #
+# the stealth case: on the 130W barrel the shift lands on an 18V PDO, so the
+# reported 117W is *plausible* and no physics check can catch it. But the sink
+# drew the source's full current (6.5A == current_max), which only its top fixed
+# PDO can grant — so the contract is 20V x 6.5A, whatever voltage_now claims.
+r = m.plausible_in_w(117.0, 130.0, 40.0, False, True)
+assert r == (130.0, True, False), r        # deterministic — no latch needed
+# proving it must not need load: true at idle too
+r = m.plausible_in_w(117.0, 130.0, 0, False, True)
+assert r == (130.0, True, False), r
+# healthy firmware: voltage_now already == voltage_max, so contract == reported
+# and nothing is substituted (contract_w <= reported_w short-circuits)
+r = m.plausible_in_w(130.0, 130.0, 40.0, False, True)
+assert r == (130.0, False, False), r
+# partial contract (sink asked below the source's max current) → no top-PDO
+# claim; falls through to the physics check, which clears it
+r = m.plausible_in_w(45.0, 60.0, 40.0, False, False)
+assert r == (45.0, False, False), r
 print("wall-input plausibility OK")
 
 # ---- GPU-first cap arbitration (v0.28.0) ---- #

@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.28.1] — 2026-07-11
+
+### Fixed
+- **The wall-input reading was still wrong on the 130 W charger — just not
+  obviously so.** v0.28.0 caught the Dell EC's shifted-PDO firmware bug with a
+  physics check, which works when the bad reading is absurd: on the WD22TB4 dock
+  the shift lands on the 5 V PDO and the input reads 32.5 W under an 80 W load,
+  which is impossible. On the 130 W barrel charger the same shift lands on an
+  18 V PDO, so the input reads **117 W instead of 130 W** — believable, and
+  therefore invisible to any plausibility test. Raw UCSI `GET_PDOS` confirms the
+  list is `[null, 5 V, 18 V, 20 V/6.5 A]` at offset 0 and `[5 V, 18 V,
+  20 V/6.5 A]` at offset 1, with the RDO naming object position 3: the contract
+  is 20 V × 6.5 A = 130 W, and the kernel is reading the entry below it.
+  `plausible_in_w` now leads with a deterministic detector: if the sink
+  negotiated the source's **full current** (`current_now == current_max`), the
+  contract can only be the source's top fixed PDO, whose voltage is
+  `voltage_max` by construction — so the input is known outright, with no load
+  and no inference. The physics check remains as the fallback for partial
+  contracts.
+- **The pill's power row no longer truncates.** CPU watts + GPU watts/clocks +
+  wall input outgrew the menu's width and ellipsized the wall figure away
+  entirely (`in …`). The row now wraps instead of eliding, and each figure is
+  glued with non-breaking spaces so a wrap can only land on a separator.
+
 ## [0.28.0] — 2026-07-11
 
 ### Added
