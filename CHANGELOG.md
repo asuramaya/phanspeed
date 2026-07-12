@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.0] — 2026-07-12
+
+### Added
+- **Endure confines background work to the E-cores on battery**
+  (docs/ECORE-POWER.md). On battery at intensity ≥ 3, Endure applies a runtime
+  systemd cpuset (`AllowedCPUs`) to `user.slice`/`system.slice`/`init.scope`,
+  scheduling every process onto the efficiency cores only — battery drain gets
+  a hard *ceiling* (a runaway workload burns 8 E-cores at ≤3.8 GHz instead of
+  6 P-cores at 4.9 GHz + HT), which matches the measured battery limiter on
+  this hardware (EDP/ICCmax, a current ceiling E-cores duck). Guards make it
+  inert on non-hybrid CPUs and under a hypervisor (dom0 topology is virtual —
+  placement there belongs to the virtualization orchestrator; see the spec's
+  rotten-apple contract). `--runtime` properties + a startup failsafe mean a
+  crash, kill -9, or reboot can never leave the machine wedged confined.
+  Releases instantly on AC attach, mission change, intensity drop, or exit.
+- **`endure_pause_units`** — user-named systemd units stopped on battery-Endure
+  entry and restarted on release (crash-recovered via a /run breadcrumb).
+  Aimed at background fleets that burn P-core time for nothing while unplugged.
+  Default empty; unit names are strictly validated and the daemon's own unit is
+  never eligible. New config/socket fields: `endure_ecores` (default true),
+  `endure_pause_units`; status gains `endure.ecores`, `endure.ecore_set`,
+  `endure.paused_units`; the pill shows an `E-cores` tag in the Endure hero row.
+
 ## [0.28.3] — 2026-07-12
 
 ### Fixed

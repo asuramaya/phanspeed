@@ -638,6 +638,9 @@ class PhanToggle extends QuickMenuToggle {
                 extra.push(`draw ${draw}W`);
             if (dgpu)
                 extra.push(`dGPU ${dgpu === 'suspended' ? 'asleep' : dgpu}`);
+            // battery-only: all background work confined to the E-cores
+            if (isObj(st.endure) && st.endure.ecores === true)
+                extra.push('E-cores');
             this._sceneItem.label.clutter_text.set_markup(
                 (bm || `<span foreground="${DIM}">🔋 measuring…</span>`)
                 + (extra.length

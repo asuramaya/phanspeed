@@ -65,6 +65,14 @@ GPU_IDLE_POLLS = 3          # consecutive idle samples before the poller lets go
 GPU_RELEASE_S = 90          # hands-off window: no nvidia-smi at all, so the
                             # driver's autosuspend timer can finally expire
 
+# Endure E-core confinement (docs/ECORE-POWER.md): on battery, background work
+# is scheduled onto the efficiency cores only, giving battery drain a hard
+# ceiling. machine.slice is deliberately absent — VM placement belongs to the
+# virtualization orchestrator, not this daemon.
+ENDURE_SLICES = ("user.slice", "system.slice", "init.scope")
+ENDURE_ECORE_MIN_INTENSITY = 3
+PAUSED_UNITS_PATH = "/run/phanspeed/paused_units.json"
+
 # NOTE: Dell hides a lower package PL1 in a chipset MMIO register that the MSR/
 # sysfs view doesn't reflect (the hardware obeys the lower of the two). We
 # deliberately do NOT touch it: reaching it needs /dev/mem + CAP_SYS_RAWIO, far
@@ -155,6 +163,8 @@ DEFAULTS = {
     "intensity": 2,                 # 0..4 — lean within the active mission
     "endure_gpu_sleep": True,       # Endure: let the dGPU runtime-suspend (big win)
     "endure_trim": True,            # Endure "at all costs": dim panel + kbd off
+    "endure_ecores": True,          # Endure on battery: confine work to E-cores
+    "endure_pause_units": [],       # systemd units to stop on battery-Endure
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -230,8 +240,11 @@ def sanitize_config(cfg, choices, sensors):
         cfg["mission"] = ""
     iv = _coerce_num(cfg.get("intensity"), 0, INTENSITY_MAX)
     cfg["intensity"] = int(iv) if iv is not None else DEFAULTS["intensity"]
-    for bk in ("endure_gpu_sleep", "endure_trim"):
+    for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores"):
         cfg[bk] = bool(cfg.get(bk)) if isinstance(cfg.get(bk), bool) else DEFAULTS[bk]
+    pu = cfg.get("endure_pause_units")
+    cfg["endure_pause_units"] = ([u for u in pu if valid_unit_name(u)][:16]
+                                 if isinstance(pu, list) else [])
     # invariants — the failsafe must always be meaningful
     cfg["emergency_temp"] = min(cfg["emergency_temp"], NUM_LIMITS["emergency_temp"][1])
     if cfg["emergency_clear_temp"] >= cfg["emergency_temp"]:
@@ -285,6 +298,50 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     failsafe trip."""
     dead_streak = 0 if raw_alive else dead_streak + 1
     return (dead_streak < debounce, dead_streak)
+
+
+def little_cpus(siblings):
+    """From (cpu, thread_siblings_list) pairs → the E-core cpuset string.
+
+    Intel hybrid P-cores are hyperthreaded (their sibling list names two
+    threads); E-cores are not (singleton list). Returns an AllowedCPUs-style
+    range string like '12-19', or None when the topology isn't hybrid — an
+    HT-off machine would classify every core as 'E', and a homogeneous one has
+    nothing to confine to, so both must leave the feature inert."""
+    littles, bigs = [], []
+    for cpu, sib in siblings:
+        sib = (sib or "").strip()
+        if not sib:
+            continue
+        (bigs if ("," in sib or "-" in sib) else littles).append(int(cpu))
+    if not littles or not bigs:
+        return None
+    littles = sorted(set(littles))
+    ranges, start, prev = [], littles[0], littles[0]
+    for c in littles[1:]:
+        if c == prev + 1:
+            prev = c
+            continue
+        ranges.append((start, prev))
+        start = prev = c
+    ranges.append((start, prev))
+    return ",".join(f"{a}-{b}" if a != b else f"{a}" for a, b in ranges)
+
+
+def ecores_wanted(mission, intensity, on_battery, enabled, eset):
+    """Should the E-core confinement be active right now? (trigger matrix)"""
+    return bool(enabled and eset and mission == "endure" and on_battery
+                and intensity >= ENDURE_ECORE_MIN_INTENSITY)
+
+
+def valid_unit_name(u):
+    """A systemd unit name we are willing to stop/start on the user's behalf.
+    The daemon's own unit is never eligible — a config (even a hostile one via
+    the socket) must not be able to make the daemon stop itself."""
+    return (isinstance(u, str) and 0 < len(u) <= 64
+            and u.endswith((".service", ".timer", ".socket", ".target"))
+            and all(ch.isalnum() or ch in "_.@-" for ch in u)
+            and not u.startswith("phanspeed"))
 
 
 def gpu_idle_step(idle_n, util_pct, idle_util=GPU_IDLE_UTIL_PCT,
@@ -923,6 +980,14 @@ class Daemon:
         self._bat_w = None              # smoothed net battery power (+ charging)
         self._gpu_w_ema = None          # smoothed dGPU draw (W) for the Perf arbiter
         self._in_bad_key = None         # contract key of a proven-bogus wall reading
+        # Endure E-core confinement (docs/ECORE-POWER.md). Hypervisor guard:
+        # under Xen, dom0's CPU topology is virtual — confining to "cpu 12-19"
+        # pins nothing physical; placement belongs to the orchestrator there.
+        self._ecores = (None if os.path.exists("/sys/hypervisor/type")
+                        else little_cpus(self._cpu_siblings()))
+        self._confined = False          # are the slices confined right now?
+        self._paused_units = []         # units we stopped for this confinement
+        self._ecore_release(startup=True)   # crash recovery: never start wedged
         self._balance = None            # last computed power_balance() snapshot
         self._endure_cap = None         # current closed-loop Endure CPU cap (W)
         self._trim_dirty = False        # have we dimmed the panel/kbd?
@@ -1245,8 +1310,14 @@ class Daemon:
                     self.emergency = False
                     self._emerg_hits = 0
 
-            battery = bool(self.config.get("battery_aware") and self.hw.on_battery())
+            on_bat = self.hw.on_battery()
+            battery = bool(self.config.get("battery_aware") and on_bat)
             mission = self.config.get("mission", "")
+            # E-core confinement rides raw battery state, not battery_aware —
+            # a mission owns the stance whether or not legacy battery mode is on
+            self._ecore_evaluate(
+                mission if (mission in MISSIONS and not self.emergency) else "",
+                self.config.get("intensity", 2), on_bat)
             if mission in MISSIONS and not self.emergency:
                 # a mission owns the whole stance (profile + power + pref + gpu)
                 self._apply_mission(mission, self.config.get("intensity", 2), battery)
@@ -1448,6 +1519,96 @@ class Daemon:
             self.hw.gpu.set_runtime_pm(False)
             self._gpu_pm_dirty = False
 
+    # ---- Endure E-core confinement (docs/ECORE-POWER.md) ---- #
+    @staticmethod
+    def _cpu_siblings():
+        out = []
+        for d in glob.glob("/sys/devices/system/cpu/cpu[0-9]*"):
+            try:
+                cpu = int(os.path.basename(d)[3:])
+            except ValueError:
+                continue
+            out.append((cpu, _read(os.path.join(
+                d, "topology", "thread_siblings_list")) or ""))
+        return out
+
+    @staticmethod
+    def _systemctl(*args):
+        try:
+            r = subprocess.run(["systemctl", *args], capture_output=True,
+                               text=True, timeout=10)
+            if r.returncode != 0:
+                log(f"systemctl {' '.join(args)}: {r.stderr.strip()[:120]}")
+            return r.returncode == 0
+        except Exception as e:
+            log(f"systemctl {' '.join(args)} failed: {e}")
+            return False
+
+    def _ecore_evaluate(self, mission, intensity, on_battery):
+        want = ecores_wanted(mission, intensity, on_battery,
+                             self.config.get("endure_ecores", True),
+                             self._ecores)
+        if want and not self._confined:
+            self._ecore_apply()
+        elif not want and self._confined:
+            self._ecore_release()
+
+    def _ecore_apply(self):
+        """Confine the named slices to the E-cores and pause the configured
+        units. --runtime only: a crash or reboot can never leave the machine
+        wedged confined; the startup failsafe cleans up even a kill -9."""
+        for s in ENDURE_SLICES:
+            self._systemctl("set-property", "--runtime", s,
+                            f"AllowedCPUs={self._ecores}")
+        self._confined = True
+        log(f"endure: background work confined to E-cores {self._ecores}")
+        paused = []
+        for u in self.config.get("endure_pause_units") or []:
+            try:
+                r = subprocess.run(["systemctl", "is-active", u],
+                                   capture_output=True, text=True, timeout=10)
+                active = r.stdout.strip() == "active"
+            except Exception:
+                active = False
+            if active and self._systemctl("stop", u):
+                paused.append(u)
+                log(f"endure: paused {u}")
+        self._paused_units = paused
+        # breadcrumb so a daemon that dies mid-confinement can make amends
+        _write(PAUSED_UNITS_PATH, json.dumps(paused))
+
+    def _ecore_release(self, startup=False):
+        """Release the slices and restart what we paused. On startup this runs
+        unconditionally (if the feature could ever engage) to recover from a
+        previous daemon that died while confined."""
+        if startup:
+            leftover = []
+            try:
+                with open(PAUSED_UNITS_PATH) as f:
+                    leftover = [u for u in json.load(f) if valid_unit_name(u)]
+            except (OSError, ValueError):
+                pass
+            if not (self._ecores or leftover):
+                return
+            for u in leftover:
+                if self._systemctl("start", u):
+                    log(f"endure: recovered paused unit {u}")
+        elif not self._confined:
+            return
+        for s in ENDURE_SLICES:
+            self._systemctl("set-property", "--runtime", s, "AllowedCPUs=")
+        for u in self._paused_units:
+            if self._systemctl("start", u):
+                log(f"endure: resumed {u}")
+        self._paused_units = []
+        self._confined = False
+        try:
+            os.unlink(PAUSED_UNITS_PATH)
+        except OSError:
+            pass
+        if not startup:
+            log("endure: E-core confinement released")
+
     def _apply_gpu(self, emergency, battery):
         """No GPU power-capping: nvidia-smi -pl is firmware-locked on this class of
         hardware (the cap was always a no-op), and *attempting* it means polling
@@ -1592,6 +1753,9 @@ class Daemon:
                     "trim": self.config.get("endure_trim", True),
                     "cap_w": self._endure_cap,
                     "dimmed": self._trim_dirty,
+                    "ecores": self._confined,
+                    "ecore_set": self._ecores,
+                    "paused_units": list(self._paused_units),
                 },
                 "power_balance": self._balance,
                 "config": self.config,
@@ -1705,12 +1869,18 @@ class Daemon:
                     rejected.append("intensity")
                 else:
                     changes["intensity"] = int(iv)
-            for bk in ("endure_gpu_sleep", "endure_trim"):
+            for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores"):
                 if bk in msg:
                     if isinstance(msg[bk], bool):
                         changes[bk] = msg[bk]
                     else:
                         rejected.append(bk)
+            if "endure_pause_units" in msg:
+                pu = msg["endure_pause_units"]
+                if isinstance(pu, list) and all(valid_unit_name(u) for u in pu):
+                    changes["endure_pause_units"] = pu
+                else:
+                    rejected.append("endure_pause_units")
             for k, (lo, hi) in NUM_LIMITS.items():
                 if k in msg:
                     cv = _coerce_num(msg[k], lo, hi)
@@ -1823,6 +1993,7 @@ class Daemon:
             if self._epp_dirty and "default" in self.hw.epp_choices:
                 self.hw.set_epp("default")
             self._endure_teardown()            # un-dim panel/kbd, free dGPU runtime PM
+            self._ecore_release()              # unconfine slices, resume paused units
             self.hw.gpu.restore()
         except Exception as e:
             log(f"restore error: {e}")

@@ -60,8 +60,11 @@ def check(cfg, where):
         iv = cfg["intensity"]
         assert isinstance(iv, int) and not isinstance(iv, bool), "intensity type"
         assert 0 <= iv <= m.INTENSITY_MAX, "intensity range"
-        for bk in ("endure_gpu_sleep", "endure_trim"):
+        for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores"):
             assert isinstance(cfg[bk], bool), f"{bk} type"
+        pu = cfg["endure_pause_units"]
+        assert isinstance(pu, list) and len(pu) <= 16, "endure_pause_units shape"
+        assert all(m.valid_unit_name(u) for u in pu), "invalid unit survived"
         assert all(isinstance(u, int) for u in cfg["allow_uids"]), "allow_uids type"
     except AssertionError as e:
         fails.append(f"[{where}] {e}")
@@ -306,6 +309,46 @@ with tempfile.TemporaryDirectory() as td:
     assert m.mains_online(td) is True
 
 print("Mains gate OK")
+
+# ---- Endure E-core confinement (v0.29.0) ---- #
+# topology parser: P-cores are the HT pairs, E-cores the singletons
+SIB_12900H = ([(c, f"{c & ~1}-{(c & ~1) + 1}") for c in range(12)]
+              + [(c, str(c)) for c in range(12, 20)])
+assert m.little_cpus(SIB_12900H) == "12-19"
+# non-contiguous E-cores compress into range lists
+assert m.little_cpus([(0, "0-1"), (1, "0-1"), (4, "4"), (5, "5"), (9, "9")]) \
+    == "4-5,9"
+# HT everywhere (no E-cores) and HT nowhere (would misread all cores as E):
+# both non-hybrid shapes must leave the feature inert
+assert m.little_cpus([(c, f"{c & ~1}-{(c & ~1) + 1}") for c in range(8)]) is None
+assert m.little_cpus([(c, str(c)) for c in range(8)]) is None
+assert m.little_cpus([]) is None
+# unreadable sibling files are skipped, not misclassified
+assert m.little_cpus([(0, ""), (1, None), (2, "2"), (3, "3-4")]) == "2"
+
+# trigger matrix: endure + battery + intensity>=3 + enabled + hybrid — only then
+W = m.ecores_wanted
+assert W("endure", 4, True, True, "12-19") is True
+assert W("endure", 3, True, True, "12-19") is True
+assert W("endure", 2, True, True, "12-19") is False   # intensity too low
+assert W("endure", 4, False, True, "12-19") is False  # on AC
+assert W("endure", 4, True, False, "12-19") is False  # disabled by config
+assert W("endure", 4, True, True, None) is False      # not hybrid / hypervisor
+assert W("perf", 4, True, True, "12-19") is False     # wrong mission
+assert W("", 4, True, True, "12-19") is False         # emergency/legacy path
+
+# unit-name gate: the daemon must never be able to stop itself, and only
+# plausible systemd unit names are eligible at all
+assert m.valid_unit_name("gestalt.service") is True
+assert m.valid_unit_name("snap.cups.cupsd.service") is True
+assert m.valid_unit_name("phanspeed.service") is False
+assert m.valid_unit_name("phanspeedd.service") is False
+assert m.valid_unit_name("rm -rf /.service") is False
+assert m.valid_unit_name("noext") is False
+assert m.valid_unit_name("") is False
+assert m.valid_unit_name(42) is False
+assert m.valid_unit_name("a" * 65 + ".service") is False
+print("E-core confinement OK")
 
 # ---- GPU idle-release (v0.28.3) ---- #
 # polling an awake GPU resets its autosuspend timer, so after GPU_IDLE_POLLS
