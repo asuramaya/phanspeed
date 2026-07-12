@@ -699,6 +699,9 @@ class PhanToggle extends QuickMenuToggle {
             pParts.push(`CPU${NB}<span foreground="${ACCENT}">${cpuW}W</span>`);
         if (gpuInfo.asleep) {
             pParts.push(`GPU${NB}<span foreground="${DIM}">asleep</span>`);
+        } else if (gpuInfo.releasing === true) {
+            // idle and deliberately unpolled, so the driver can suspend it
+            pParts.push(`GPU${NB}<span foreground="${DIM}">idle</span>`);
         } else if (gpuW != null || gpuMhz != null) {
             const gc = gpuInfo.clamped ? '#ff5b5b' : ACCENT;
             pParts.push(`GPU${NB}<span foreground="${gc}">`

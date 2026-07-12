@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.28.3] — 2026-07-12
+
+### Fixed
+- **The daemon's own GPU telemetry was pinning the dGPU awake.** `Gpu.query()`
+  refuses to *wake* a suspended GPU, but nothing ever let an awake GPU *fall*
+  asleep: every 3 s poll runs nvidia-smi, every nvidia-smi resets the driver's
+  autosuspend timer, so once awake the dGPU could never reach D3cold while
+  phanspeedd ran — ~8.5 W burned for telemetry nobody needed, and the whole
+  package capped at PC2 (deep package C-states need the PCIe link down). The
+  poller now counts consecutive idle samples (utilization ≤ 5 % three times)
+  and then goes completely hands-off for 90 s so autosuspend can fire
+  (`gpu_idle_step`, unit-tested). A busy GPU is never released, so Perf's
+  GPU-first arbitration is unaffected. The pill shows `GPU idle` during the
+  hands-off window, then `GPU asleep` once the driver takes it down.
+- **A daemon started while the dGPU slept stayed blind to it forever.**
+  `Gpu.__init__` probed with nvidia-smi, which the suspended-guard correctly
+  refused — but that left `available=False` permanently. The GPU is now marked
+  present from its PCI identity alone and the static fields (name, power
+  limits) fill in lazily the first time it is awake.
+
 ## [0.28.2] — 2026-07-11
 
 ### Fixed

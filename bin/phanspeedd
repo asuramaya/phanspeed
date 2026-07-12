@@ -60,6 +60,10 @@ PERF_WALL_OVERHEAD_W = 15   # wall budget the CPU cap must leave for the rest of
                             # the platform (display, board, VRM losses)
 PERF_GPU_MIN_W = 10         # arbitrate CPU-vs-GPU only when the GPU is genuinely
                             # drawing — an idle/asleep GPU never shrinks the CPU cap
+GPU_IDLE_UTIL_PCT = 5       # at/below this utilization a sample counts as idle
+GPU_IDLE_POLLS = 3          # consecutive idle samples before the poller lets go
+GPU_RELEASE_S = 90          # hands-off window: no nvidia-smi at all, so the
+                            # driver's autosuspend timer can finally expire
 
 # NOTE: Dell hides a lower package PL1 in a chipset MMIO register that the MSR/
 # sysfs view doesn't reflect (the hardware obeys the lower of the two). We
@@ -281,6 +285,24 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     failsafe trip."""
     dead_streak = 0 if raw_alive else dead_streak + 1
     return (dead_streak < debounce, dead_streak)
+
+
+def gpu_idle_step(idle_n, util_pct, idle_util=GPU_IDLE_UTIL_PCT,
+                  need=GPU_IDLE_POLLS):
+    """One step of the GPU idle-release counter → (new_idle_n, release_now).
+
+    Polling an *awake* GPU with nvidia-smi every loop resets the driver's
+    autosuspend timer, so the telemetry itself pins the dGPU out of D3cold
+    forever (~8.5 W for nothing, and the whole package capped at PC2). The
+    poller therefore counts consecutive idle samples; after `need` of them it
+    signals release: stop touching the GPU entirely for a hands-off window so
+    autosuspend can fire. A busy sample resets the count."""
+    if util_pct is not None and util_pct <= idle_util:
+        idle_n += 1
+        if idle_n >= need:
+            return 0, True
+        return idle_n, False
+    return 0, False
 
 
 def mains_online(root="/sys/class/power_supply"):
@@ -708,16 +730,26 @@ class Gpu:
         self.min_w = self.max_w = self.default_w = None
         self._cache = None
         self._cache_t = 0.0
+        self._idle_n = 0             # consecutive idle samples (gpu_idle_step)
+        self._release_until = 0.0    # hands-off deadline; no nvidia-smi before it
         self._discover_pci()
         if not NVIDIA_SMI:
             return
         info = self.query(max_age=0)
         if info:
             self.available = True
-            self.name = info.get("name")
-            self.min_w = info.get("min")
-            self.max_w = info.get("max")
-            self.default_w = info.get("default")
+            self._fill_static(info)
+        elif self.pci_control and self.runtime_status() == "suspended":
+            # The dGPU is asleep right now — starting blind is fine, waking it
+            # to read its name is not. Mark it present; the static fields fill
+            # in lazily the first time something else has it awake.
+            self.available = True
+
+    def _fill_static(self, info):
+        self.name = info.get("name")
+        self.min_w = info.get("min")
+        self.max_w = info.get("max")
+        self.default_w = info.get("default")
 
     # ---- runtime power management (let the dGPU drop to D3cold when idle) ---- #
     def _discover_pci(self):
@@ -745,6 +777,10 @@ class Gpu:
     @property
     def has_runtime_pm(self):
         return bool(self.pci_control)
+
+    def releasing(self):
+        """True while the poller is hands-off so autosuspend can fire."""
+        return time.monotonic() < self._release_until
 
     def runtime_status(self):
         """'suspended' / 'active' for the dGPU (first function), or None."""
@@ -786,6 +822,13 @@ class Gpu:
         # the GPU, defeating the Endure sleep lever. A sleeping GPU has no
         # telemetry worth waking it for — report it as asleep instead.
         if self.runtime_status() == "suspended":
+            self._idle_n, self._release_until = 0, 0.0
+            return None
+        # Awake but idle: our own polling is what keeps it awake — every
+        # nvidia-smi resets the driver's autosuspend timer, so without this
+        # release the GPU can never reach D3cold while the daemon runs
+        # (see gpu_idle_step). During the hands-off window report nothing.
+        if now < self._release_until:
             return None
         r = self._run(["--query-gpu=" + _GPU_FIELDS,
                        "--format=csv,noheader,nounits", "-i", "0"], timeout=2)
@@ -803,6 +846,11 @@ class Gpu:
         info = {"name": p[0], "temp": f(p[1]), "draw": f(p[2]), "util": f(p[3]),
                 "limit": f(p[4]), "default": f(p[5]), "min": f(p[6]), "max": f(p[7]),
                 "clock": f(p[8]), "max_clock": f(p[9])}
+        if self.name is None:
+            self._fill_static(info)   # daemon started while the GPU slept
+        self._idle_n, release = gpu_idle_step(self._idle_n, info["util"])
+        if release:
+            self._release_until = now + GPU_RELEASE_S
         self._cache, self._cache_t = info, now
         return info
 
@@ -1573,6 +1621,9 @@ class Daemon:
             "runtime_pm": g.has_runtime_pm,
             "runtime_status": rt,
             "asleep": asleep,
+            # hands-off window: awake but deliberately unpolled so the driver's
+            # autosuspend can take it down (see gpu_idle_step)
+            "releasing": (not asleep) and g.releasing(),
             "power_w": info.get("draw") if info else None,
             "clock_mhz": clock,
             "max_clock_mhz": max_clock,

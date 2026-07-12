@@ -307,6 +307,26 @@ with tempfile.TemporaryDirectory() as td:
 
 print("Mains gate OK")
 
+# ---- GPU idle-release (v0.28.3) ---- #
+# polling an awake GPU resets its autosuspend timer, so after GPU_IDLE_POLLS
+# consecutive idle samples the poller must let go
+n, rel = m.gpu_idle_step(0, 0.0)
+assert (n, rel) == (1, False)
+n, rel = m.gpu_idle_step(1, 0.0)
+assert (n, rel) == (2, False)
+n, rel = m.gpu_idle_step(2, 0.0)
+assert (n, rel) == (0, True), "third idle sample must release"
+# genuine load resets the counter — a busy GPU is never released
+n, rel = m.gpu_idle_step(2, 80.0)
+assert (n, rel) == (0, False)
+# unreadable utilization is NOT idle evidence (never release blind)
+n, rel = m.gpu_idle_step(2, None)
+assert (n, rel) == (0, False)
+# boundary: exactly GPU_IDLE_UTIL_PCT still counts as idle
+n, rel = m.gpu_idle_step(0, float(m.GPU_IDLE_UTIL_PCT))
+assert (n, rel) == (1, False)
+print("GPU idle-release OK")
+
 # ---- GPU-first cap arbitration (v0.28.0) ---- #
 # GPU eating 60W of a 127W budget → CPU cap yields to the leftover
 assert m.arbitrate_cap(81, 126.8, 60.0) == 51
