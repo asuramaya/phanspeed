@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 loader = machinery.SourceFileLoader("phanspeedd", os.path.join(HERE, "bin", "phanspeedd"))
@@ -263,6 +264,48 @@ assert r == (130.0, False, False), r
 r = m.plausible_in_w(45.0, 60.0, 40.0, False, False)
 assert r == (45.0, False, False), r
 print("wall-input plausibility OK")
+
+# ---- Mains gate (v0.28.2) ---- #
+# A USB-C connector can sit at online=1 with its last negotiated contract long
+# after the dock stops delivering. Only the Mains supply drops the instant the
+# plug leaves, so it is the authority on whether anything is feeding us.
+
+
+def _psy(root, name, typ, online):
+    d = os.path.join(root, name)
+    os.makedirs(d)
+    with open(os.path.join(d, "type"), "w") as f:
+        f.write(typ + "\n")
+    if online is not None:
+        with open(os.path.join(d, "online"), "w") as f:
+            f.write(str(online) + "\n")
+
+
+with tempfile.TemporaryDirectory() as td:
+    # the exact live trap: mains gone, but the PD source still claims online
+    _psy(td, "AC", "Mains", 0)
+    _psy(td, "ucsi-source-psy-USBC000:003", "USB", 1)
+    _psy(td, "BAT0", "Battery", None)
+    assert m.mains_online(td) is False, "stale PD source must not count as input"
+
+with tempfile.TemporaryDirectory() as td:
+    _psy(td, "AC", "Mains", 1)
+    _psy(td, "ucsi-source-psy-USBC000:003", "USB", 1)
+    assert m.mains_online(td) is True
+
+with tempfile.TemporaryDirectory() as td:
+    # a platform with no Mains supply at all: we cannot check, so don't blind
+    # the ledger — fall back to trusting the sources
+    _psy(td, "ucsi-source-psy-USBC000:003", "USB", 1)
+    assert m.mains_online(td) is True, "no Mains supply → must not gate"
+
+with tempfile.TemporaryDirectory() as td:
+    # more than one Mains (dock + barrel): any one of them online counts
+    _psy(td, "AC", "Mains", 0)
+    _psy(td, "ADP1", "Mains", 1)
+    assert m.mains_online(td) is True
+
+print("Mains gate OK")
 
 # ---- GPU-first cap arbitration (v0.28.0) ---- #
 # GPU eating 60W of a 127W budget → CPU cap yields to the leftover

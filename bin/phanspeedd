@@ -283,6 +283,26 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     return (dead_streak < debounce, dead_streak)
 
 
+def mains_online(root="/sys/class/power_supply"):
+    """Is anything actually feeding the machine? True/False.
+
+    The Mains supply (the EC's own view of the barrel/PD adapter) is the only
+    input signal that drops the instant the plug leaves. A USB-C connector's
+    power_supply can keep reporting online=1 with its last negotiated contract
+    long after the dock stops delivering, so it must never be believed on its
+    own. If the platform exposes no Mains supply at all we cannot make this
+    check, and say True rather than blind the whole ledger.
+    """
+    seen = False
+    for d in glob.glob(os.path.join(root, "*")):
+        if _read(os.path.join(d, "type")) != "Mains":
+            continue
+        seen = True
+        if _read_int(os.path.join(d, "online")) == 1:
+            return True
+    return not seen
+
+
 def plausible_in_w(reported_w, contract_w, floor_w, latched, top_pdo=False):
     """Pick the believable wall-input wattage → (in_w, estimated, latched).
 
@@ -1004,12 +1024,23 @@ class Daemon:
         battery power (+ charging / − draining), total system draw, and a
         runtime estimate. Call once per loop — it samples the charge gauge over
         time, so repeated calls within a poll would skew the delta."""
+        mains_on = mains_online()
         # --- input from any online source (USB-C PD / barrel / Mains) ---
         power_in, have_in = 0.0, False
         contract_in, have_contract, top_pdo = 0.0, False, False
         for d in glob.glob("/sys/class/power_supply/*"):
             if _read(os.path.join(d, "type")) == "Battery":
                 continue
+            if not mains_on:
+                # The Mains supply is the EC's own word on whether anything is
+                # actually feeding us, and it is the one that drops the instant
+                # the plug leaves. The UCSI source psys lag it badly: unplug the
+                # dock and a connector can sit at online=1 with its last
+                # negotiated contract (5V x 6.5A) indefinitely. Believing it
+                # credits the ledger ~127W of wall power that does not exist —
+                # the battery drains while the pill insists it's on shore power,
+                # and `draw` grows past what any charger here could supply.
+                break
             if _read_int(os.path.join(d, "online")) != 1:
                 continue
             pw = _read_int(os.path.join(d, "power_now"))
@@ -1099,8 +1130,14 @@ class Daemon:
                 self._in_bad_key = key
         budget_w = (round(max(power_in, contract_in if have_contract else 0.0), 1)
                     if have_in else None)
-        draw = (round(power_in - self._bat_w, 1)
-                if have_in and self._bat_w is not None else None)
+        if have_in and self._bat_w is not None:
+            draw = round(power_in - self._bat_w, 1)
+        elif self._bat_w is not None and self._bat_w < 0:
+            # unplugged: everything the machine consumes comes out of the
+            # battery, so the discharge rate IS the system draw.
+            draw = round(-self._bat_w, 1)
+        else:
+            draw = None
         self._balance = {
             "in_w": round(power_in, 1) if have_in else None,
             "in_est": in_est,

@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.28.2] — 2026-07-11
+
+### Fixed
+- **Phantom wall power while running on battery.** Unplug the dock and its USB-C
+  connector can sit at `online=1` indefinitely, still advertising the last
+  contract it negotiated (5 V × 6.5 A). `power_balance` believed it, credited the
+  ledger ~127 W of wall input that did not exist, and — with the battery
+  draining at 38 W — reported a system draw of 175 W, more than any charger on
+  this machine can supply. The pill cheerfully showed `in ~126.8W` while the
+  laptop ran on its battery. Input is now gated on the **Mains** supply
+  (`mains_online()`), which is the EC's own word on whether anything is actually
+  feeding the machine and the only signal that drops the instant the plug leaves.
+  Platforms with no Mains supply at all are not gated, so nothing goes blind.
+- **`draw_w` now reported on battery.** With no wall input there was no draw
+  figure at all; the discharge rate *is* the system draw when unplugged, so it is
+  now reported as such — the number Endure most wants to show.
+
 ## [0.28.1] — 2026-07-11
 
 ### Fixed
