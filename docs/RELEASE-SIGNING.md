@@ -1,13 +1,15 @@
 # Release signing
 
-Status: **`phanspeed-update` (the .deb auto-update path) verifies; `install.sh`'s
-curl-pipe-bash bootstrap does NOT yet, and needs a design fix first — see
-below, not just a missing feature.** `release-signing/allowed_signers` is
-currently empty — no signing key has been provisioned. Until it holds a real
-key, `phanspeed-update` behaves exactly as before (SHA256-only). The moment a
-real key lands in that file and a release ships a matching `SHA256SUMS.sig`,
-verification becomes fail-closed automatically there — no further code
-changes needed for that path.
+Status: **both paths verify (v0.29.4).** `install.sh`'s curl-pipe-bash
+bootstrap no longer installs from GitHub's auto-generated (uncovered) source
+tarball — it fetches and verifies the release's own `.deb` + `SHA256SUMS`
+directly, same as `phanspeed-update`, then `dpkg -i`s it. Neither path
+enforces a *signature* yet: `release-signing/allowed_signers` (and its
+install.sh-embedded twin, `RELEASE_ALLOWED_SIGNERS`) are currently empty — no
+signing key has been provisioned. Until one is, both degrade to SHA256-only
+with a printed warning. The moment a real key exists in both places and a
+release ships a matching `SHA256SUMS.sig`, verification becomes fail-closed
+automatically — no further code changes needed.
 
 ## Why this exists
 
@@ -44,6 +46,13 @@ ssh-keygen -t ed25519-sk -O resident -O verify-required \
 echo "phanspeed-release $(cut -d' ' -f1,2 release-signing/id_release.pub)" \
   > release-signing/allowed_signers
 
+# install.sh's curl-pipe-bash bootstrap only ever fetches ONE file (itself),
+# so it can't read the sibling allowed_signers file — the same line has to
+# be embedded directly in install.sh's RELEASE_ALLOWED_SIGNERS constant too.
+# Keep both in sync on every rotation.
+sed -i "s|^RELEASE_ALLOWED_SIGNERS=.*|RELEASE_ALLOWED_SIGNERS=\"$(cat release-signing/allowed_signers)\"|" \
+  install.sh
+
 # The .pub file and allowed_signers are safe to commit. id_release (the
 # handle) is NOT secret by itself without the hardware key, but keep it out
 # of the repo anyway — store it with the key, not in git.
@@ -61,7 +70,7 @@ ssh-keygen -Y sign -f release-signing/id_release.pub -n phanspeed-release \
 gh release upload vX.Y.Z dist/SHA256SUMS.sig
 ```
 
-## Verification (client side — already built, v0.29.2)
+## Verification (client side — already built, v0.29.2 + v0.29.4)
 
 Both `bin/phanspeed-update` and `install.sh`'s curl-pipe-bash bootstrap:
 
@@ -83,21 +92,20 @@ ssh-keygen -Y verify -f release-signing/allowed_signers \
 Exit 0 = valid signature from the pinned principal. Anything else is a hard
 failure — there is no "install anyway" path once a key is provisioned.
 
-## The install.sh gap (not yet fixed — real, not cosmetic)
+## The install.sh gap — FIXED (v0.29.4)
 
-`install.sh`'s curl-pipe-bash bootstrap fetches GitHub's **auto-generated**
-`tarball_url` (a live source-archive snapshot), not the `.deb` release asset.
-`SHA256SUMS` only ever contains the `.deb`'s hash (`packaging/build-deb.sh`
-writes exactly one line) — so the bootstrap tarball has **no checksum
-coverage today, signing or not**. Bolting a signature check onto the current
-bootstrap would check a signed manifest that doesn't cover the artifact
-actually being executed — worse than no check, since it would look
-authoritative without being one.
+`install.sh`'s curl-pipe-bash bootstrap used to fetch GitHub's
+**auto-generated** `tarball_url` (a live source-archive snapshot), not the
+`.deb` release asset — and `SHA256SUMS` only ever contains the `.deb`'s hash
+(`packaging/build-deb.sh` writes exactly one line), so that tarball had no
+checksum coverage at all, signing or not.
 
-The real fix changes what the bootstrap installs from: switch it to fetch the
+Fixed by changing what the bootstrap installs from: it now fetches the
 release's own `.deb` + `SHA256SUMS` (+ `SHA256SUMS.sig` once provisioned) —
-the same assets `phanspeed-update` already verifies — and either install via
-`dpkg` directly or extract the pieces `install.sh` needs from inside the
-verified `.deb`, instead of trusting an unrelated, uncovered tarball. That's a
-behavior change to the bootstrap, not just an added check, so it wants its own
-pass rather than being folded silently into this one.
+the exact same assets `phanspeed-update` verifies — checks them the same way,
+and `dpkg -i`s the verified `.deb` directly (escalating only that one command
+via `sudo`, not the whole script). Anyone wanting a source install instead
+still clones the repo and runs `install.sh` from within it — that path is
+unchanged and skips this block entirely, since `bin/phanspeedd` already
+exists locally in that case. Requires `dpkg` on the host; a clear error
+points source-install users at the checkout path if it's missing.

@@ -6,24 +6,90 @@ set -euo pipefail
 
 REPO="asuramaya/phanspeed"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)"
-
-# Bootstrap for the one-line install (`curl -fsSL .../install.sh | bash`): if we
-# aren't sitting next to the source tree, fetch the latest release and re-exec.
-if [[ ! -f "$SRC/bin/phanspeedd" ]]; then
-  echo "== fetching latest PhanSpeed release =="
-  TMP="$(mktemp -d)"
-  url="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-        | grep -m1 tarball_url | cut -d'"' -f4)"
-  [[ -n "$url" ]] || { echo "could not find a release to download"; exit 1; }
-  curl -fsSL "$url" | tar -xz -C "$TMP" --strip-components=1
-  exec bash "$TMP/install.sh" "$@"
-fi
-
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
 EXT_UUID="phanspeed@local"
 EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+
+# Pinned release-signing key (docs/RELEASE-SIGNING.md), for the bootstrap
+# below. A fresh `curl -fsSL .../install.sh | bash` fetches ONLY this file —
+# not the sibling release-signing/ directory — so the trust anchor has to
+# travel embedded in whichever copy of this script is currently executing,
+# not be read from a file that hasn't been fetched yet (that would mean
+# trusting the very release being verified). Empty = no key provisioned yet;
+# falls back to SHA256-only with a warning, same as phanspeed-update. Keep in
+# sync with release-signing/allowed_signers when a real key lands there.
+RELEASE_ALLOWED_SIGNERS=""
+
+# Bootstrap for the one-line install (`curl -fsSL .../install.sh | bash`): if
+# we aren't sitting next to the source tree, fetch+verify the release's OWN
+# .deb and install straight from it. NOT GitHub's auto-generated tarball_url
+# (the previous approach) — that artifact has never had checksum coverage
+# (packaging/build-deb.sh's SHA256SUMS only ever contains the .deb's hash),
+# so no signature check could ever mean anything applied to it. Anyone
+# wanting a source install instead should clone the repo and run this script
+# from within it — untouched, and skips this block entirely.
+if [[ ! -f "$SRC/bin/phanspeedd" ]]; then
+  echo "== fetching latest PhanSpeed release =="
+  command -v dpkg >/dev/null || {
+    echo "dpkg not found — this quick-install path needs a Debian/Ubuntu"
+    echo "system. Clone the repo and run install.sh from a full checkout"
+    echo "instead."
+    exit 1
+  }
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+
+  api_json="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")" \
+    || { echo "release metadata fetch failed"; exit 1; }
+  deb_url="$(grep -m1 '"browser_download_url":.*\.deb"' <<<"$api_json" | cut -d'"' -f4)"
+  sums_url="$(grep -m1 '"browser_download_url":.*/SHA256SUMS"' <<<"$api_json" | cut -d'"' -f4)"
+  [[ -n "$deb_url" && -n "$sums_url" ]] \
+    || { echo "release has no .deb/SHA256SUMS asset — refusing to install unverified."; exit 1; }
+
+  curl -fsSL "$deb_url" -o "$TMP/phanspeed.deb" || { echo "deb download failed"; exit 1; }
+  curl -fsSL "$sums_url" -o "$TMP/SHA256SUMS" || { echo "SHA256SUMS download failed"; exit 1; }
+
+  debname="$(basename "$deb_url")"
+  want="$(awk -v n="$debname" '$2==n || $2=="*"n {print $1}' "$TMP/SHA256SUMS")"
+  [[ -n "$want" ]] || { echo "SHA256SUMS has no entry for $debname — aborting."; exit 1; }
+  got="$(sha256sum "$TMP/phanspeed.deb" | cut -d' ' -f1)"
+  [[ "$got" == "$want" ]] || { echo "CHECKSUM MISMATCH for $debname — aborting."; exit 1; }
+  echo "sha256 verified."
+
+  if [[ -n "$RELEASE_ALLOWED_SIGNERS" ]]; then
+    sig_url="$(grep -m1 '"browser_download_url":.*SHA256SUMS\.sig"' <<<"$api_json" | cut -d'"' -f4)"
+    [[ -n "$sig_url" ]] \
+      || { echo "signing key is pinned but the release has no SHA256SUMS.sig — refusing to install unsigned."; exit 1; }
+    curl -fsSL "$sig_url" -o "$TMP/SHA256SUMS.sig" || { echo "SHA256SUMS.sig download failed"; exit 1; }
+    printf '%s\n' "$RELEASE_ALLOWED_SIGNERS" > "$TMP/allowed_signers"
+    ssh-keygen -Y verify -f "$TMP/allowed_signers" -I phanspeed-release \
+      -n phanspeed-release -s "$TMP/SHA256SUMS.sig" < "$TMP/SHA256SUMS" \
+      || { echo "SIGNATURE VERIFICATION FAILED — aborting."; exit 1; }
+    echo "signature verified."
+  else
+    echo "warning: no release-signing key provisioned yet (see"
+    echo "docs/RELEASE-SIGNING.md) — proceeding on SHA256 alone."
+  fi
+
+  if [[ $EUID -eq 0 ]]; then
+    dpkg -i "$TMP/phanspeed.deb"
+  else
+    echo "Installing (will prompt for sudo)..."
+    sudo dpkg -i "$TMP/phanspeed.deb"
+  fi
+  sudo -u "$REAL_USER" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_UID/bus" \
+    gnome-extensions enable "$EXT_UUID" 2>/dev/null \
+    && echo "pill enabled for $REAL_USER" \
+    || echo "(enable it after your next login: gnome-extensions enable $EXT_UUID)"
+  echo
+  echo ">>> LOG OUT and back in once <<<  (Wayland must restart the shell to load a"
+  echo "    new extension). After that the PhanSpeed pill appears in Quick Settings"
+  echo "    next to Wi-Fi/Bluetooth — no further logouts ever needed."
+  exit 0
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Re-running with sudo..."

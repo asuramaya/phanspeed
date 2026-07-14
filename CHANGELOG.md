@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.4] — 2026-07-14
+
+### Fixed
+- **`install.sh`'s curl-pipe-bash bootstrap now verifies what it actually
+  executes (docs/RELEASE-SIGNING.md).** It used to fetch GitHub's
+  auto-generated `tarball_url` (a live source-archive snapshot) and re-exec
+  the `install.sh` inside it — but `SHA256SUMS` has only ever covered the
+  `.deb`'s hash, so that tarball had zero checksum coverage, signing or not.
+  The bootstrap now fetches and verifies the release's own `.deb` +
+  `SHA256SUMS` — the exact same assets `phanspeed-update` already checks —
+  and `dpkg -i`s the verified package directly, escalating only that one
+  command via `sudo` rather than the whole script. A source install (clone
+  the repo, run `install.sh` from within it) is unchanged and still skips
+  this block entirely. Verified live end-to-end: real fetch from the actual
+  GitHub release, checksum verified, correct warning printed (no signing key
+  provisioned yet), clean `dpkg -i`, extension auto-enabled.
+  Once a signing key is provisioned (v0.29.2's mechanism), the bootstrap
+  enforces it exactly like `phanspeed-update` does — the pinned key needs to
+  live in two places now (`release-signing/allowed_signers` and this script's
+  own embedded `RELEASE_ALLOWED_SIGNERS`, since a bare `curl | bash` only ever
+  fetches the one file); the provisioning walkthrough keeps both in sync.
+
 ## [0.29.3] — 2026-07-14
 
 ### Added
