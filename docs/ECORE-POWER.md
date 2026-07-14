@@ -130,15 +130,38 @@ Orchestrator policy sketch (rotten-apple side, not phanspeed's code):
 
 ### The pin API (Soundwave's ask, same contract)
 
-The promised job-scoped pin rides the same socket: a tenant (or the
-orchestrator relaying for a guest over vsock) sends
-`{"pin": {"mission": "perf", "ttl_s": 3600, "owner": "domU:soundwave"}}`;
-phanspeed holds the mission until TTL/expiry/release and reports the owner in
-status. On battery-endure a pin request is *answered* (denied or granted per
-config), never silently ignored — the v0.26.2 incident class (one team's
-power choice invisibly clamping another's GPU) becomes a visible, negotiated
-transaction. Guests never talk to phanspeed directly; the orchestrator is the
-only client, so the daemon's attack surface doesn't grow.
+Status: **core mechanism shipped (v0.29.3)** — `cmd: pin` / `cmd: unpin` on
+the existing control socket, matching the codebase's real `{"cmd": ...}`
+protocol (not the nested `{"pin": {...}}` shape this section originally
+sketched):
+
+```json
+{"cmd": "pin", "mission": "perf", "ttl_s": 3600, "owner": "domU:soundwave"}
+{"cmd": "unpin"}
+```
+
+phanspeed holds the mission until TTL/expiry/release and reports it in
+`status.json`'s `pin` field (separate from `mission`, which always keeps
+reflecting the operator's own configured choice — a pin overrides what's
+*applied*, never what the pill shows as selected). Every request is answered
+explicitly — granted or denied with a reason (`pin_decision()`, unit-tested)
+— never silently ignored or silently clobbered: a second pin while one is
+already held is denied naming the current holder, and a pin that would fight
+an active battery-conservation stance (Endure, on battery) is denied unless
+the request is itself for Endure or the policy is explicitly relaxed
+(`pin_deny_on_battery_endure: false`). This is the v0.26.2 incident class (one
+team's power choice invisibly clamping another's GPU) becoming a visible,
+negotiated transaction instead.
+
+**Transport still undecided, deliberately.** The mechanism rides the *existing*
+control socket, gated by the *existing* SO_PEERCRED + `allow_uids` check —
+nothing new is exposed. Whether a remote/cross-project caller (a bare-metal
+Soundwave, or a Xen guest relayed by rotten-apple) ever reaches this socket at
+all — and how — is a separate trust-boundary decision, not defaulted here.
+"Guests never talk to phanspeed directly; the orchestrator is the only
+client" is a real option for the Xen case, but Soundwave's original ask was
+bare-metal with no orchestrator in the loop, so that framing doesn't fully
+apply — pick the transport before wiring any cross-team caller.
 
 ### Why this shape
 

@@ -60,7 +60,8 @@ def check(cfg, where):
         iv = cfg["intensity"]
         assert isinstance(iv, int) and not isinstance(iv, bool), "intensity type"
         assert 0 <= iv <= m.INTENSITY_MAX, "intensity range"
-        for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores"):
+        for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores",
+                   "pin_deny_on_battery_endure"):
             assert isinstance(cfg[bk], bool), f"{bk} type"
         pu = cfg["endure_pause_units"]
         assert isinstance(pu, list) and len(pu) <= 16, "endure_pause_units shape"
@@ -383,6 +384,45 @@ assert m.energy_wh(1_000_000, 1_000_000) == 0.0      # no time elapsed yet
 assert m.energy_wh(1_000_000, 5_000_000) == 0.0
 assert m.energy_wh(1_000_000) == round(1_000_000 / 1e6 / 3600, 3)  # default baseline 0
 print("mission-energy ledger OK")
+
+# ---- job-scoped mission pin (v0.29.3) ---- #
+# every request gets an explicit grant/deny — that's the whole point, so each
+# denial path is tested individually, not just "returns False somewhere"
+g, r = m.pin_decision("perf", 3600, "domU:soundwave", False, "", None, True)
+assert g is True, r
+g, r = m.pin_decision("ascend", 3600, "x", False, "", None, True)
+assert g is False and "mission" in r
+for bad_ttl in (0, -1, m.PIN_TTL_MAX_S + 1, "3600", True, None, float("nan")):
+    g, r = m.pin_decision("perf", bad_ttl, "x", False, "", None, True)
+    assert g is False and "ttl_s" in r, (bad_ttl, g, r)
+for bad_owner in ("", None, 42, "x" * (m.PIN_OWNER_MAX_LEN + 1)):
+    g, r = m.pin_decision("perf", 60, bad_owner, False, "", None, True)
+    assert g is False and "owner" in r, (bad_owner, g, r)
+# a second pin never silently clobbers the first
+held = {"mission": "perf", "owner": "domU:already-here", "ttl_s": 60,
+        "granted_at": 0.0}
+g, r = m.pin_decision("cool", 60, "domU:newcomer", False, "", held, True)
+assert g is False and "already-here" in r, r
+# operator conserving battery: a conflicting pin is denied by default...
+g, r = m.pin_decision("perf", 60, "x", True, "endure", None, True)
+assert g is False and "battery" in r.lower(), r
+# ...a pin for endure itself never fights conservation, so it's granted...
+g, r = m.pin_decision("endure", 60, "x", True, "endure", None, True)
+assert g is True, r
+# ...and the policy can be explicitly relaxed
+g, r = m.pin_decision("perf", 60, "x", True, "endure", None, False)
+assert g is True, r
+# battery alone (not actively conserving via endure) doesn't trigger the policy
+g, r = m.pin_decision("cool", 60, "x", True, "perf", None, True)
+assert g is True, r
+print("pin_decision OK")
+
+assert m.pin_expired(None, 999) is False
+p = {"mission": "perf", "owner": "x", "ttl_s": 60, "granted_at": 100.0}
+assert m.pin_expired(p, 159.9) is False
+assert m.pin_expired(p, 160.0) is True          # boundary: >= ttl_s has elapsed
+assert m.pin_expired(p, 200.0) is True
+print("pin_expired OK")
 
 # ---- GPU-first cap arbitration (v0.28.0) ---- #
 # GPU eating 60W of a 127W budget → CPU cap yields to the leftover

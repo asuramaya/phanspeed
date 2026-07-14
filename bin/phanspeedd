@@ -111,6 +111,16 @@ RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
 # `intensity` (0..4) is how hard you lean into the active mission's objective.
 MISSIONS = ("cool", "perf", "endure")
 INTENSITY_MAX = 4
+# Job-scoped mission pin (docs/ECORE-POWER.md "The pin API", promised to a
+# fleet peer in the thread-254 postmortem). A caller holds a mission for a
+# bounded TTL so a shared-hardware power choice becomes a negotiated,
+# explicitly-answered transaction instead of an invisible clamp (the v0.26.2
+# incident class). Core mechanism only for now — rides the existing control
+# socket (SO_PEERCRED + allow_uids, unchanged); how a REMOTE/cross-project
+# caller would ever reach this socket is a separate, undecided question.
+PIN_TTL_MIN_S = 1
+PIN_TTL_MAX_S = 24 * 3600      # a pin is a lease, not a permanent takeover
+PIN_OWNER_MAX_LEN = 64
 # Software thermal failsafe. With a healthy CPU fan the chip's normal operating
 # ceiling *is* Tjmax (~100 °C) — the silicon throttles itself there in hardware,
 # by design, under any sustained load. So a software "emergency" at/under Tjmax
@@ -165,6 +175,10 @@ DEFAULTS = {
     "endure_trim": True,            # Endure "at all costs": dim panel + kbd off
     "endure_ecores": True,          # Endure on battery: confine work to E-cores
     "endure_pause_units": [],       # systemd units to stop on battery-Endure
+    "pin_deny_on_battery_endure": True,  # deny a pin that would fight the
+                                         # operator's own battery-conservation
+                                         # stance, rather than silently grant
+                                         # or silently ignore it (see PIN API)
 }
 
 # Hard safety bounds for socket-settable numeric fields. The control socket is
@@ -240,7 +254,8 @@ def sanitize_config(cfg, choices, sensors):
         cfg["mission"] = ""
     iv = _coerce_num(cfg.get("intensity"), 0, INTENSITY_MAX)
     cfg["intensity"] = int(iv) if iv is not None else DEFAULTS["intensity"]
-    for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores"):
+    for bk in ("endure_gpu_sleep", "endure_trim", "endure_ecores",
+               "pin_deny_on_battery_endure"):
         cfg[bk] = bool(cfg.get(bk)) if isinstance(cfg.get(bk), bool) else DEFAULTS[bk]
     pu = cfg.get("endure_pause_units")
     cfg["endure_pause_units"] = ([u for u in pu if valid_unit_name(u)][:16]
@@ -360,6 +375,45 @@ def gpu_idle_step(idle_n, util_pct, idle_util=GPU_IDLE_UTIL_PCT,
             return 0, True
         return idle_n, False
     return 0, False
+
+
+def pin_decision(mission, ttl_s, owner, on_battery, active_mission,
+                 current_pin, deny_on_battery_endure):
+    """Should a NEW pin request be granted? → (granted: bool, reason: str).
+
+    Every request gets an explicit answer — that's the whole point (see the
+    module comment above `PIN_TTL_MIN_S`): a silently-ignored or silently-
+    overridden pin request is exactly the incident class this exists to
+    prevent. Denial reasons, in priority order:
+      * malformed request (bad mission / ttl_s / owner) — never granted.
+      * someone already holds a pin — a second pin does not silently clobber
+        the first; the holder must release() or let it expire.
+      * the operator is actively conserving battery (Endure, on battery) and
+        the request would fight that — denied unless the policy is
+        explicitly relaxed (pin_deny_on_battery_endure=False) or the request
+        itself is for endure (never fights conservation)."""
+    if mission not in MISSIONS:
+        return False, f"invalid mission {mission!r}"
+    if not isinstance(ttl_s, (int, float)) or isinstance(ttl_s, bool) or not (
+            PIN_TTL_MIN_S <= ttl_s <= PIN_TTL_MAX_S):
+        return False, f"ttl_s must be {PIN_TTL_MIN_S}..{PIN_TTL_MAX_S}"
+    if not isinstance(owner, str) or not owner or len(owner) > PIN_OWNER_MAX_LEN:
+        return False, "owner must be a non-empty string"
+    if current_pin is not None:
+        return False, f"already pinned by {current_pin.get('owner')!r}"
+    if (deny_on_battery_endure and on_battery and active_mission == "endure"
+            and mission != "endure"):
+        return False, "operator is conserving battery (endure) — denied"
+    return True, "granted"
+
+
+def pin_expired(pin, now):
+    """True once a granted pin's TTL has elapsed. `pin` is the dict
+    pin_decision's caller stores on grant: {mission, owner, ttl_s,
+    granted_at}. A None pin is trivially not expired (nothing to expire)."""
+    if pin is None:
+        return False
+    return now - pin["granted_at"] >= pin["ttl_s"]
 
 
 def energy_wh(total_uj, baseline_uj=0.0):
@@ -999,6 +1053,11 @@ class Daemon:
         self._mission_energy_baseline_uj = None   # self._cpu_energy_uj snapshot at the
                                                   # current mission's start
         self._mission_started_at = None  # time.monotonic() when it started
+        self._pin = None                # active job-scoped mission pin, or None —
+                                        # {mission, owner, ttl_s, granted_at}; NOT
+                                        # persisted, so a daemon restart drops any
+                                        # outstanding pin rather than risk a stale
+                                        # one surviving unnoticed
         self._bat_prev = None           # last (charge_uah, monotonic_t) for drain calc
         self._bat_w = None              # smoothed net battery power (+ charging)
         self._gpu_w_ema = None          # smoothed dGPU draw (W) for the Perf arbiter
@@ -1337,7 +1396,14 @@ class Daemon:
 
             on_bat = self.hw.on_battery()
             battery = bool(self.config.get("battery_aware") and on_bat)
-            mission = self.config.get("mission", "")
+            if self._pin is not None and pin_expired(self._pin, time.monotonic()):
+                log(f"pin expired: {self._pin['owner']!r} held "
+                    f"{self._pin['mission']!r} for {self._pin['ttl_s']}s")
+                self._pin = None
+            # An active pin owns the mission stance outright — it exists so a
+            # shared-hardware power choice is a held lease, not a config value
+            # someone else's `set` could quietly override underneath it.
+            mission = self._pin["mission"] if self._pin else self.config.get("mission", "")
             # Exact per-mission energy ledger (see energy_wh): snapshot the
             # joule counter the moment the mission identity changes (including
             # off<->on), so "energy since this mission started" has no
@@ -1790,6 +1856,16 @@ class Daemon:
                 "mission_since_s": (round(time.monotonic() - self._mission_started_at)
                                    if self.config.get("mission", "")
                                    and self._mission_started_at else None),
+                # "mission" above always reflects the operator's OWN configured
+                # choice, unchanged by a pin — this is the pin's visible
+                # override on top of it, so it never gets silently confused
+                # for the operator's own selection (see the ECORE-POWER pin
+                # API spec's whole point: negotiated, never invisible).
+                "pin": ({"mission": self._pin["mission"], "owner": self._pin["owner"],
+                        "ttl_s": self._pin["ttl_s"],
+                        "expires_in_s": max(0, round(self._pin["ttl_s"] - (
+                            time.monotonic() - self._pin["granted_at"])))}
+                       if self._pin else None),
                 "intensity": self.config.get("intensity", 2),
                 "endure": {
                     "gpu_sleep": self.config.get("endure_gpu_sleep", True),
@@ -1958,6 +2034,45 @@ class Daemon:
             if rejected:
                 log(f"rejected invalid set fields: {rejected}")
                 resp["rejected"] = rejected
+            return resp
+        if cmd == "pin":
+            # A pin is a bounded lease, not a persisted config change — it
+            # never touches self.config or save_config(). Every request gets
+            # an explicit grant/deny in the response; see pin_decision().
+            with self.lock:
+                on_bat = self.hw.on_battery()
+                active = self._pin["mission"] if self._pin else self.config.get("mission", "")
+                granted, reason = pin_decision(
+                    msg.get("mission"), msg.get("ttl_s"), msg.get("owner"),
+                    on_bat, active, self._pin,
+                    self.config.get("pin_deny_on_battery_endure", True))
+                if granted:
+                    self._pin = {"mission": msg["mission"], "owner": msg["owner"],
+                                "ttl_s": msg["ttl_s"], "granted_at": time.monotonic()}
+                    log(f"pin granted: {msg['owner']!r} -> {msg['mission']!r} "
+                        f"for {msg['ttl_s']}s")
+                else:
+                    log(f"pin denied: {reason}")
+            self.apply_once()
+            resp = self.status()
+            resp["ok"] = granted
+            resp["pin_reason"] = reason
+            return resp
+        if cmd == "unpin":
+            # Known simplification while the transport question (who else can
+            # even reach this socket) stays deferred: any already-authorized
+            # local caller may release any pin, not only its own owner. The
+            # trust boundary today is SO_PEERCRED/allow_uids, same as every
+            # other command; per-owner release tokens are a cross-team-
+            # transport concern, not this mechanism's.
+            with self.lock:
+                had = self._pin
+                self._pin = None
+            if had:
+                log(f"pin released: {had['owner']!r} was holding {had['mission']!r}")
+            self.apply_once()
+            resp = self.status()
+            resp["pin_released"] = had is not None
             return resp
         return {"ok": False, "error": f"unknown cmd {cmd}"}
 

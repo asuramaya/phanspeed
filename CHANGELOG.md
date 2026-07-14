@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.3] — 2026-07-14
+
+### Added
+- **Job-scoped mission pin — core mechanism (docs/ECORE-POWER.md "The pin
+  API").** Promised to a fleet peer in the thread-254 postmortem, spec'd,
+  never built until now. `cmd: pin` on the control socket holds a mission for
+  a bounded TTL (`{"cmd": "pin", "mission": "perf", "ttl_s": 3600, "owner":
+  "domU:soundwave"}`), `cmd: unpin` releases it early; `status.json` gains a
+  `pin` field (`mission`/`owner`/`ttl_s`/`expires_in_s`) reported separately
+  from `mission` — a pin overrides what's *applied* to hardware, never what
+  the pill shows as the operator's own selection. Every request gets an
+  explicit grant/deny with a reason (`pin_decision()`, unit-tested), never
+  silently ignored or silently clobbered: a second pin while one is held is
+  denied naming the current owner, and a pin that would fight an active
+  battery-conservation stance (Endure, on battery) is denied unless the
+  request is itself for Endure or the policy is relaxed
+  (`pin_deny_on_battery_endure: false`, default true). This is the exact
+  incident class (one team's power choice invisibly clamping another's GPU,
+  v0.26.2) becoming a visible, negotiated transaction instead. A pin is a
+  lease, not persisted config — a daemon restart drops any outstanding pin
+  rather than risk a stale one surviving unnoticed.
+  **Transport deliberately NOT decided here**: this rides the *existing*
+  control socket under the *existing* SO_PEERCRED + `allow_uids` gate, so
+  nothing new is exposed by this change. Whether a remote/cross-project
+  caller (bare-metal or a Xen guest relayed by rotten-apple) ever reaches
+  this socket, and how, is a separate trust-boundary decision — deliberately
+  out of scope so it doesn't get defaulted into existence.
+
 ## [0.29.2] — 2026-07-14
 
 ### Added
