@@ -33,6 +33,7 @@ verify-unit:
 check: lint verify-unit
 	python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update diag.py
 	python3 tests/test_validation.py
+	python3 tests/test_signing.py
 	node --check $(EXT)/extension.js
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
 	@echo "all static checks passed"

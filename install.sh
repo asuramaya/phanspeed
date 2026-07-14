@@ -54,6 +54,10 @@ install -m 0755 -o root -g root "$SRC/bin/phanspeed-update" /usr/local/bin/phans
 # version marker so `phanspeed version` works on source installs too
 install -d -m 0755 /usr/share/phanspeed
 install -m 0644 "$SRC/VERSION" /usr/share/phanspeed/VERSION
+# release-signing trust anchor (docs/RELEASE-SIGNING.md) -- empty until a key
+# is provisioned; phanspeed-update degrades to SHA256-only until it isn't
+install -m 0644 "$SRC/release-signing/allowed_signers" \
+        /usr/share/phanspeed/allowed_signers
 
 # 2. default config (auto mode); allow_uids locks control to the installing user
 echo "-- writing default config -> /etc/phanspeed/config.json (allow_uids=[$USER_UID])"

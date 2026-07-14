@@ -1,7 +1,8 @@
 # E-core-first power policy — spec (v0.29.0) and the rotten-apple composition
 
-Status: **spec, not yet built.** Bare-metal half targets phanspeed v0.29.0;
-the Xen half is a contract for rotten-apple to consume, not phanspeed code.
+Status: **Part 1 (bare metal) shipped in phanspeed v0.29.0.** Part 2 (Xen) is
+a contract for rotten-apple to consume, not phanspeed code — published,
+coordination sent (Osiris msg 339), implementation pending on their side.
 
 ## The idea in one line
 

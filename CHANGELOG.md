@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.2] — 2026-07-14
+
+### Added
+- **Release-signature verification for the auto-update path (docs/RELEASE-SIGNING.md).**
+  `phanspeed-update` has always fail-closed-verified a release's SHA256, but
+  that only proves a download wasn't corrupted — the checksum comes from the
+  same release it's checking, so it proves nothing about authenticity. This
+  adds SSH-signature verification (`ssh-keygen -Y verify`) against a pinned
+  key (`release-signing/allowed_signers`), designed for a resident,
+  touch-required FIDO2 hardware key so a compromised CI/build machine cannot
+  forge a release without the physical token. **Not yet enforcing** — the
+  trust-anchor file ships empty (no key provisioned), so today's behavior is
+  unchanged (SHA256-only, with a printed warning). The moment a real key is
+  provisioned and a release ships a matching `SHA256SUMS.sig`, verification
+  becomes mandatory and fail-closed automatically, no further code changes
+  needed. `install.sh`'s curl-pipe-bash bootstrap is deliberately NOT touched
+  yet: it fetches GitHub's auto-generated source tarball, which SHA256SUMS
+  never covered in the first place (only the `.deb`'s hash) — bolting a
+  signature check onto an artifact the manifest doesn't cover would be worse
+  than no check, so that path needs its own fix (switch it to install from
+  the verified `.deb`) rather than a bolted-on illusion of coverage. See
+  docs/RELEASE-SIGNING.md for the full design and the exact provisioning
+  commands.
+
 ## [0.29.1] — 2026-07-13
 
 ### Added

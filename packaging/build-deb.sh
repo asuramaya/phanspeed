@@ -43,6 +43,11 @@ install -m 0644 "$SRC/extension/phanspeed@local/metadata.json" \
 echo "$VER" > "$ROOT/usr/share/phanspeed/VERSION"
 install -m 0600 "$SRC/packaging/config.default.json" "$ROOT/etc/phanspeed/config.json"
 
+# release-signing trust anchor (docs/RELEASE-SIGNING.md) -- empty until a key
+# is provisioned; phanspeed-update degrades to SHA256-only until it isn't
+install -m 0644 "$SRC/release-signing/allowed_signers" \
+        "$ROOT/usr/share/phanspeed/allowed_signers"
+
 # control + maintainer scripts
 sed "s/@VERSION@/$VER/" "$SRC/packaging/debian/control" > "$ROOT/DEBIAN/control"
 install -m 0644 "$SRC/packaging/debian/conffiles" "$ROOT/DEBIAN/conffiles"

@@ -15,8 +15,11 @@ control loop.
 
 Integrity note: downloads are over HTTPS (GitHub as trust anchor) and verified
 against the published SHA256SUMS. That protects against corruption/partial
-downloads; it is NOT a cryptographic signature. GPG-signed releases are a planned
-hardening step — see CHANGELOG.
+downloads, not authenticity — the checksum comes from the same release it
+checks, so a compromised asset carries its own "valid" checksum. Once a
+signing key is provisioned (docs/RELEASE-SIGNING.md), SHA256SUMS.sig is also
+verified against the pinned key and any failure is fail-closed. Until then
+this degrades to SHA256-only with a printed warning — see verify_signature().
 """
 import hashlib
 import json
@@ -31,6 +34,56 @@ REPO = "asuramaya/phanspeed"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PKG = "phanspeed"
 VERSION_FILE = "/usr/share/phanspeed/VERSION"
+SIGN_NAMESPACE = "phanspeed-release"
+# Installed (.deb) location first — matches VERSION_FILE's own convention —
+# falling back to the repo-relative path for a source checkout / dev testing.
+_SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ALLOWED_SIGNERS_CANDIDATES = (
+    "/usr/share/phanspeed/allowed_signers",
+    os.path.join(_SRC_DIR, "release-signing", "allowed_signers"),
+)
+
+
+def allowed_signers_path():
+    return next((p for p in ALLOWED_SIGNERS_CANDIDATES if os.path.exists(p)),
+                ALLOWED_SIGNERS_CANDIDATES[0])
+
+
+def has_signing_key(path=None):
+    """Has a real key been provisioned, or is this still the empty placeholder?
+
+    allowed_signers lines are `principal [options] keytype base64key`; blank
+    lines are the only thing we need to skip (we never write comments into
+    this file — see docs/RELEASE-SIGNING.md for why)."""
+    try:
+        with open(path or allowed_signers_path()) as f:
+            return any(line.strip() for line in f)
+    except OSError:
+        return False
+
+
+def verify_signature(data, sig_bytes, allowed_signers=None,
+                     namespace=SIGN_NAMESPACE):
+    """True/False — does `sig_bytes` verify against the pinned key over `data`?
+    Caller must only call this once has_signing_key() is True; with no key
+    provisioned there is nothing to verify against."""
+    fd, sig_path = tempfile.mkstemp(prefix="phanspeed-sig-", suffix=".sig")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(sig_bytes)
+        r = subprocess.run(
+            ["ssh-keygen", "-Y", "verify", "-f",
+             allowed_signers or allowed_signers_path(),
+             "-I", namespace, "-n", namespace, "-s", sig_path],
+            input=data, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            sys.stderr.write(r.stderr.decode(errors="replace"))
+        return r.returncode == 0
+    finally:
+        try:
+            os.unlink(sig_path)
+        except OSError:
+            pass
 
 
 def deb_version():
@@ -147,6 +200,27 @@ def main():
         print(f"CHECKSUM MISMATCH for {deb} — aborting.")
         return 1
     print("sha256 verified.")
+
+    if has_signing_key():
+        sig_name = "SHA256SUMS.sig"
+        if sig_name not in assets:
+            print(f"error: signing key is provisioned but {sig_name} is "
+                  f"missing from the release — refusing to install "
+                  f"unsigned.")
+            return 1
+        try:
+            sig_bytes = fetch(assets[sig_name], binary=True)
+        except Exception as e:
+            print(f"error: could not fetch {sig_name} ({e}) — aborting.")
+            return 1
+        if not verify_signature(sums.encode(), sig_bytes):
+            print("SIGNATURE VERIFICATION FAILED — aborting.")
+            return 1
+        print("signature verified.")
+    else:
+        print("warning: no release-signing key provisioned yet "
+              "(release-signing/allowed_signers is empty) — proceeding on "
+              "SHA256 alone. See docs/RELEASE-SIGNING.md.")
 
     # Unpredictable, O_EXCL, mode-0600 temp file (via mkstemp) — closes the
     # world-writable-/tmp symlink write-through and the write->dpkg TOCTOU that a
