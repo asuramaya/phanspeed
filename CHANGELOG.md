@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.1] — 2026-07-13
+
+### Added
+- **Exact per-mission energy ledger.** The pill now shows "Session energy:
+  X.X Wh · Ym · Z.Z W avg" for the active mission — not a periodic-sample
+  estimate but the hardware RAPL joule counter itself, unwrapped and
+  accumulated on every poll (`energy_wh`, unit-tested). A snapshot is taken
+  the instant a mission's identity changes (entering, leaving, or switching
+  missions — an intensity change within the same mission does not reset it),
+  so the figure is exactly "what this mission has cost since it started," with
+  none of the trapezoid-integration error a userspace estimate from periodic
+  watt samples would carry. New status fields: `power.session_wh` (lifetime
+  since the daemon started), `mission_wh`, `mission_since_s`.
+  Prompted by an unrelated but adjacent ask: another project on this machine
+  wanted CPU joules from RAPL's `energy_uj`, which is root-only by deliberate
+  kernel mitigation (PLATYPUS, CVE-2020-8694) — reversing that with a world-
+  readable `chmod` was rejected. This ships the same data the safe way: the
+  root daemon already reads the counter every poll, so it publishes the
+  derived joules through the existing world-readable status.json instead of
+  loosening the raw file's permissions.
+
 ## [0.29.0] — 2026-07-12
 
 ### Added

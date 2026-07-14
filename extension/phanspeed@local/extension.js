@@ -93,6 +93,9 @@ function fmtMin(rem) {
     const h = Math.floor(rem / 60), m = Math.round(rem % 60);
     return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`;
 }
+function fmtWh(wh) {
+    return wh < 1 ? wh.toFixed(2) : wh.toFixed(1);
+}
 // The Endure mission's break-even gauge: "+2W ▲ 11h" (holding) / "−8W ▼ 1h12m".
 function balanceMarkup(bal) {
     const bw = num(bal && bal.battery_w);
@@ -224,6 +227,8 @@ class PhanToggle extends QuickMenuToggle {
         this._missionStatusSection.addMenuItem(this._turboStatusItem);
         this._eppStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._missionStatusSection.addMenuItem(this._eppStatusItem);
+        this._energyStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._missionStatusSection.addMenuItem(this._energyStatusItem);
         this._exitMissionItem = new PopupMenu.PopupMenuItem(
             '↩ Leave mission (manual control)');
         this._exitMissionItem.connect('activate', () => {
@@ -624,6 +629,22 @@ class PhanToggle extends QuickMenuToggle {
                     ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
         }
         this._eppStatusItem.visible = !!this._eppSub;
+
+        // exact energy spent since this mission started — the hardware RAPL
+        // joule counter itself (see energy_wh in the daemon), not a periodic-
+        // sample estimate
+        const missionWh = num(st.mission_wh);
+        this._energyStatusItem.visible = missionWh != null;
+        if (missionWh != null) {
+            const sinceS = num(st.mission_since_s);
+            const parts = [`${fmtWh(missionWh)} Wh`];
+            if (sinceS != null) {
+                parts.push(fmtMin(sinceS / 60));
+                if (sinceS > 0)
+                    parts.push(`${(missionWh * 3600 / sinceS).toFixed(1)} W avg`);
+            }
+            this._energyStatusItem.label.text = `Session energy: ${parts.join(' · ')}`;
+        }
 
         // headline readout — re-skinned to the active mission's hero metric
         if (mission === 'endure') {

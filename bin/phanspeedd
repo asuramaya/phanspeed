@@ -362,6 +362,19 @@ def gpu_idle_step(idle_n, util_pct, idle_util=GPU_IDLE_UTIL_PCT,
     return 0, False
 
 
+def energy_wh(total_uj, baseline_uj=0.0):
+    """Exact Wh consumed between `baseline_uj` and `total_uj` — both drawn from
+    the daemon's already-unwrapped, monotonically-accumulated CPU-package
+    joule counter (see _sample_cpu_power), so unlike a periodic-sample
+    integration this has no trapezoid error: it's the real hardware energy
+    counter, just converted units. baseline_uj=0 (the default) gives the
+    lifetime total since the daemon started; a snapshot gives the total since
+    that snapshot (e.g. since a mission became active)."""
+    if total_uj is None:
+        return None
+    return round(max(0.0, total_uj - (baseline_uj or 0.0)) / 1e6 / 3600, 3)
+
+
 def mains_online(root="/sys/class/power_supply"):
     """Is anything actually feeding the machine? True/False.
 
@@ -976,6 +989,16 @@ class Daemon:
         self._busy_pct = None           # CPU busy% over the last poll
         self._energy_prev = None        # last (energy_uj, monotonic_t) for CPU watts
         self._cpu_actual_w = None       # measured CPU package watts over the last poll
+        self._cpu_energy_uj = None      # monotonic, wraparound-corrected CPU package
+                                        # joules accumulated since the daemon started
+        self._energy_mission = None     # mission string as of the last poll, to detect
+                                        # a transition (None until the first energy
+                                        # sample lands, so a mission active across a
+                                        # daemon restart doesn't briefly inherit energy
+                                        # spent before this instance existed)
+        self._mission_energy_baseline_uj = None   # self._cpu_energy_uj snapshot at the
+                                                  # current mission's start
+        self._mission_started_at = None  # time.monotonic() when it started
         self._bat_prev = None           # last (charge_uah, monotonic_t) for drain calc
         self._bat_w = None              # smoothed net battery power (+ charging)
         self._gpu_w_ema = None          # smoothed dGPU draw (W) for the Perf arbiter
@@ -1101,6 +1124,8 @@ class Daemon:
         if de < 0 and self.hw.energy_max_range_uj:
             de += self.hw.energy_max_range_uj
         self._cpu_actual_w = round(de / 1e6 / dt, 1) if dt > 0 and de >= 0 else None
+        if de >= 0:
+            self._cpu_energy_uj = (self._cpu_energy_uj or 0.0) + de
 
     def clamp_status(self):
         """Detect a hardware power clamp: under real load the top core is pinned
@@ -1313,6 +1338,17 @@ class Daemon:
             on_bat = self.hw.on_battery()
             battery = bool(self.config.get("battery_aware") and on_bat)
             mission = self.config.get("mission", "")
+            # Exact per-mission energy ledger (see energy_wh): snapshot the
+            # joule counter the moment the mission identity changes (including
+            # off<->on), so "energy since this mission started" has no
+            # trapezoid-integration error — it's the hardware counter itself.
+            # Gated on a real energy sample existing yet, so a mission already
+            # active when the daemon (re)starts doesn't inherit energy spent
+            # before this instance existed.
+            if mission != self._energy_mission and self._cpu_energy_uj is not None:
+                self._energy_mission = mission
+                self._mission_energy_baseline_uj = self._cpu_energy_uj
+                self._mission_started_at = time.monotonic() if mission else None
             # E-core confinement rides raw battery state, not battery_aware —
             # a mission owns the stance whether or not legacy battery mode is on
             self._ecore_evaluate(
@@ -1728,6 +1764,7 @@ class Daemon:
                     "battery_w": self.config.get("battery_power_w", 0),
                     "current_w": self.hw.get_power_w(),
                     "actual_w": self._cpu_actual_w,
+                    "session_wh": energy_wh(self._cpu_energy_uj),
                     "base_w": self.hw.power_base_w,
                     "min_w": PL_MIN_W,
                     "default_w": (round(self.hw.power_default_uw / 1e6)
@@ -1747,6 +1784,12 @@ class Daemon:
                 "cpu_clamp": self.clamp_status(),
                 "mission": self.config.get("mission", ""),
                 "mission_active": bool(self.config.get("mission", "")),
+                "mission_wh": (energy_wh(self._cpu_energy_uj,
+                                        self._mission_energy_baseline_uj)
+                              if self.config.get("mission", "") else None),
+                "mission_since_s": (round(time.monotonic() - self._mission_started_at)
+                                   if self.config.get("mission", "")
+                                   and self._mission_started_at else None),
                 "intensity": self.config.get("intensity", 2),
                 "endure": {
                     "gpu_sleep": self.config.get("endure_gpu_sleep", True),

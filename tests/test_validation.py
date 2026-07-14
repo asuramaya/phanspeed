@@ -370,6 +370,20 @@ n, rel = m.gpu_idle_step(0, float(m.GPU_IDLE_UTIL_PCT))
 assert (n, rel) == (1, False)
 print("GPU idle-release OK")
 
+# ---- exact mission-energy ledger (v0.29.1) ---- #
+# total_uj/baseline_uj come from the daemon's already-unwrapped, monotonically
+# accumulated CPU-package joule counter, so this is unit conversion only — no
+# wraparound handling belongs here (that already happened before accumulation).
+assert m.energy_wh(None) is None
+assert m.energy_wh(3_600_000_000) == 1.0            # 3.6 MJ = 1 Wh, lifetime (baseline 0)
+assert m.energy_wh(3_600_000_000, 1_800_000_000) == 0.5   # since a snapshot
+assert m.energy_wh(1_000_000, 1_000_000) == 0.0      # no time elapsed yet
+# baseline ahead of total should never happen (accumulator only grows), but
+# must not go negative if it somehow does — floor at 0
+assert m.energy_wh(1_000_000, 5_000_000) == 0.0
+assert m.energy_wh(1_000_000) == round(1_000_000 / 1e6 / 3600, 3)  # default baseline 0
+print("mission-energy ledger OK")
+
 # ---- GPU-first cap arbitration (v0.28.0) ---- #
 # GPU eating 60W of a 127W budget → CPU cap yields to the leftover
 assert m.arbitrate_cap(81, 126.8, 60.0) == 51
