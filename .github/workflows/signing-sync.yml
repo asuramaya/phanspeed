@@ -2,8 +2,10 @@ name: signing-sync
 # Enforces RELEASE.md's sync-signers invariant: release-signing/allowed_signers
 # (and install.sh's embedded twin) must always be either (a) empty — the
 # pre-arming shipping state, verification inert — or (b) exactly 4 well-formed
-# lines, byte-identical between the file and the embedded copy. "Same 4 keys
-# everywhere" is a CHECKED invariant here, not a convention.
+# lines, identical between the file and the embedded copy modulo the one
+# trailing newline mudra's sync-signers always leaves on the anchor file but
+# not the embedded copy. "Same 4 keys everywhere" is a CHECKED invariant
+# here, not a convention.
 #
 # The canonical key home is ~/.ssh/asuramaya-master/ on the operator's own
 # machine (ruling 13ee52ce) — outside every repo, never committed, never
@@ -57,10 +59,14 @@ jobs:
                   sys.exit(f"malformed allowed_signers line: {ln!r}")
           print("4 well-formed lines OK")
 
-          if embedded != anchor:
+          # mudra writes the anchor file WITH a trailing newline but embeds
+          # the bare body (no trailing newline) into install.sh -- by design
+          # (bin/mudra's sync_signers()), so compare with that one newline
+          # normalized away rather than byte-for-byte.
+          if embedded != anchor.rstrip("\n"):
               sys.exit("DRIFT: install.sh's embedded RELEASE_ALLOWED_SIGNERS "
                         "does not match release-signing/allowed_signers. "
-                        "Re-run 'make sync-signers' and commit the result — "
-                        "never hand-edit either.")
+                        "Re-run 'mudra sync-signers phanspeed' and commit the "
+                        "result — never hand-edit either.")
           print("embedded copy matches the anchor file OK")
           PYEOF
