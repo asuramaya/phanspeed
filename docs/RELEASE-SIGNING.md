@@ -5,18 +5,19 @@ Repo-specific notes. The canonical, fleet-wide doctrine lives in
 gestalt · sutra) — read that first; this file is phanspeed's application of
 it.
 
-Status (v0.30.0): both `install.sh`'s curl-pipe-bash bootstrap and
-`bin/phanspeed-update` fetch and verify the release's own `.deb` +
-`SHA256SUMS` (now a manifest covering the `.deb` **and** the release
-tarball, one file, `.github/workflows/release.yml`), then `dpkg -i` /
-install. Neither path enforces a *signature* yet: `release-signing/
-allowed_signers` (and its install.sh-embedded twin, `RELEASE_ALLOWED_SIGNERS`)
-are currently empty — the anchor is unarmed. Until it's armed, both degrade
-to SHA256-only with a printed warning. Arming happens in the SAME act as
-phanspeed's first signed release (`make sync-signers`, below) — never
-before, per RELEASE.md's sequencing rule (arming early only bricks
-`phanspeed-update` where a fail-closed verifier is already deployed; harmless
-here since none is, but the doctrine is repo-uniform on purpose).
+Status: **ARMED (v0.30.1+).** `release-signing/allowed_signers` (and
+install.sh's embedded twin, `RELEASE_ALLOWED_SIGNERS`) carry the fleet's 4
+canonical pubkeys — verification is now MANDATORY and fail-closed. Both
+`install.sh`'s curl-pipe-bash bootstrap and `bin/phanspeed-update` fetch and
+verify the release's own `.deb` + `SHA256SUMS` (a manifest covering the
+`.deb` **and** the release tarball, one file, `.github/workflows/
+release.yml`), then require a valid `SHA256SUMS.sig` before installing — no
+signature, no install, no downgrade path. Armed in the same act as
+phanspeed's first signed release (v0.30.1), per RELEASE.md's "arm before
+tag" sequencing, so the first sealed artifacts carry the anchor from birth.
+Deployed 0.29.x installs are unaffected: their own installed anchors stay
+empty (degrade-to-SHA256 mode) until they update to a release built after
+arming.
 
 ## Why this exists
 
@@ -66,23 +67,27 @@ convention every other pill uses — its own project name), namespace is
 `phanspeed-release` (paired with the fleet-shared `pills-tag` namespace —
 RELEASE.md's format is `<repo> namespaces="<repo>-release,pills-tag" ...`).
 The key material to pin is **reused** from the fleet's already-enrolled
-identity via `make sync-signers`, never freshly minted.
+identity via `mudra sync-signers`, never freshly minted.
 
-## Arming the anchor (operator, first signed release only — `make sync-signers`)
+## Re-arming the anchor (a key is lost/rotated — `mudra sync-signers`)
 
 ```sh
-make sync-signers
+~/code/REPOS/mudra/bin/mudra sync-signers phanspeed
 ```
 
-`tools/sync-signers.sh` rebuilds `release-signing/allowed_signers` — always a
-full rebuild from **all** canonical keys, never an append (RA's first
-ceremony left 3 of 4 keys unpinned by appending one at a time) — from
-`~/.ssh/asuramaya-master/*.pub` (exactly 4, refuses otherwise), and syncs the
-byte-identical copy into `install.sh`'s `RELEASE_ALLOWED_SIGNERS` in the same
-act (`.github/workflows/signing-sync.yml` checks the two never drift).
-`allowed_signers` is safe to commit — public keys only. Per RELEASE.md's
-"arm before tag" ordering: `make sync-signers` → commit → tag → CI builds →
-operator signs, so the first *sealed* artifacts carry the anchor from birth.
+`mudra` (the fleet's seal desk, `~/code/REPOS/mudra`) rebuilds
+`release-signing/allowed_signers` — always a full rebuild from **all**
+canonical keys, never an append (RA's first ceremony left 3 of 4 keys
+unpinned by appending one at a time) — from `~/.ssh/asuramaya-master/*.pub`
+(exactly 4, refuses otherwise), and syncs the copy into `install.sh`'s
+`RELEASE_ALLOWED_SIGNERS` in the same act (`.github/workflows/
+signing-sync.yml` checks the two never drift, modulo the one trailing
+newline mudra's anchor file carries and the embedded copy doesn't).
+`allowed_signers` is safe to commit — public keys only. (phanspeed carried
+its own `tools/sync-signers.sh` pre-mudra; retired once mudra existed —
+one implementation, zero drift, per Alfred.) Commit exactly the two
+changed files as `arm release verification: pin the master identity` (or,
+for a rotation, whatever revocation the commit is actually doing).
 
 ## Per-release signing (operator, needs a FIDO2 key attached + a touch)
 
