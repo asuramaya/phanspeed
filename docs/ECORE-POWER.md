@@ -111,9 +111,17 @@ orchestrator watches it (inotify; zero polling cost) and reads:
 
 ```json
 { "on_battery": true, "mission": "endure", "intensity": 4,
+  "written_at": 1752741600.4,
   "power_balance": {"budget_w": null, "battery_w": -21.0},
-  "endure": {"ecores": true} }
+  "endure": {"ecores": true, "ecore_set": "12-19", "pcore_set": "0-11"} }
 ```
+
+`written_at` (epoch, added at Ra's request) lets an inotify watcher tell a
+stale file — a dead phanspeed that stopped updating — from steady state,
+which mtime alone can't distinguish reliably. `pcore_set` (added alongside
+the existing `ecore_set`) is read directly rather than computed as its
+complement, so a consumer never has to guess or risk drift on a future
+asymmetric-core layout.
 
 Orchestrator policy sketch (rotten-apple side, not phanspeed's code):
 

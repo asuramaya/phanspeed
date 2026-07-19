@@ -15,11 +15,15 @@ import json
 import os
 import random
 import socket
+import sys
 import tempfile
 import threading
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# phanspeedd imports sutra as a sibling (the vendored layout); needs bin/ on
+# sys.path since a direct SourceFileLoader load skips the usual script-dir trick.
+sys.path.insert(0, os.path.join(HERE, "bin"))
 
 # Load the daemon module, redirect all runtime paths into a tempdir.
 tmp = tempfile.mkdtemp(prefix="phanspeed-test-")
@@ -186,7 +190,10 @@ r = json.loads(raw(b'{"cmd":"get"}\n', allow_uid=ME) or b"{}")
 if not r.get("ok"):
     fails.append("authorized peer rejected")
 r = json.loads(raw(b'{"cmd":"get"}\n', allow_uid=ME + 99999) or b"{}")
-if r.get("error") != "unauthorized":
+# sutra's ControlServer raises PermissionError for a denied peer and frames
+# it as {"error": type(exc).__name__} — the shared seam's standard shape,
+# replacing phanspeed's old bespoke {"error": "unauthorized"} string.
+if r.get("error") != "PermissionError":
     fails.append(f"foreign uid NOT denied: {r}")
 print(f"   peer auth: authorized ok, foreign denied -> {r.get('error')}")
 

@@ -30,13 +30,13 @@ import json
 import os
 import shutil
 import signal
-import socket
-import struct
 import subprocess
 import sys
 import threading
 import time
 import traceback
+
+import sutra
 
 RUN_DIR = "/run/phanspeed"
 SOCK_PATH = "/run/phanspeed/control.sock"
@@ -315,25 +315,25 @@ def _sticky_fan_ok(raw_alive, dead_streak, debounce):
     return (dead_streak < debounce, dead_streak)
 
 
-def little_cpus(siblings):
-    """From (cpu, thread_siblings_list) pairs → the E-core cpuset string.
+def _partition_hybrid_cpus(siblings):
+    """(cpu, thread_siblings_list) pairs → (littles, bigs) cpu-id lists.
 
     Intel hybrid P-cores are hyperthreaded (their sibling list names two
-    threads); E-cores are not (singleton list). Returns an AllowedCPUs-style
-    range string like '12-19', or None when the topology isn't hybrid — an
-    HT-off machine would classify every core as 'E', and a homogeneous one has
-    nothing to confine to, so both must leave the feature inert."""
+    threads); E-cores are not (singleton list)."""
     littles, bigs = [], []
     for cpu, sib in siblings:
         sib = (sib or "").strip()
         if not sib:
             continue
         (bigs if ("," in sib or "-" in sib) else littles).append(int(cpu))
-    if not littles or not bigs:
-        return None
-    littles = sorted(set(littles))
-    ranges, start, prev = [], littles[0], littles[0]
-    for c in littles[1:]:
+    return littles, bigs
+
+
+def _cpu_ranges(cpus):
+    """Sorted-unique a cpu-id list → an AllowedCPUs-style range string like '12-19'."""
+    cpus = sorted(set(cpus))
+    ranges, start, prev = [], cpus[0], cpus[0]
+    for c in cpus[1:]:
         if c == prev + 1:
             prev = c
             continue
@@ -341,6 +341,32 @@ def little_cpus(siblings):
         start = prev = c
     ranges.append((start, prev))
     return ",".join(f"{a}-{b}" if a != b else f"{a}" for a, b in ranges)
+
+
+def little_cpus(siblings):
+    """From (cpu, thread_siblings_list) pairs → the E-core cpuset string.
+
+    Returns an AllowedCPUs-style range string like '12-19', or None when the
+    topology isn't hybrid — an HT-off machine would classify every core as
+    'E', and a homogeneous one has nothing to confine to, so both must leave
+    the feature inert."""
+    littles, bigs = _partition_hybrid_cpus(siblings)
+    if not littles or not bigs:
+        return None
+    return _cpu_ranges(littles)
+
+
+def big_cpus(siblings):
+    """From (cpu, thread_siblings_list) pairs → the P-core cpuset string.
+
+    Mirrors little_cpus() for the hyperthreaded cores, same
+    None-when-not-hybrid rule (rotten-apple's ask: read both sets directly
+    rather than compute one as the other's complement and risk drift on a
+    future asymmetric-core layout)."""
+    littles, bigs = _partition_hybrid_cpus(siblings)
+    if not littles or not bigs:
+        return None
+    return _cpu_ranges(bigs)
 
 
 def ecores_wanted(mission, intensity, on_battery, enabled, eset):
@@ -1020,6 +1046,15 @@ def target_level(temp, lo, hi, current, hyst):
 # --------------------------------------------------------------------------- #
 # Daemon
 # --------------------------------------------------------------------------- #
+class _PhanspeedControlServer(sutra.ControlServer):
+    """sutra's control socket, with phanspeed's own (larger, documented)
+    message-size ceiling — sutra's own MAX_LINE (4096B) is sized for the
+    smaller pills; phanspeed already commits to MAX_MSG_BYTES for its
+    set-heavy protocol (e.g. endure_pause_units lists), so this is the one
+    knob worth overriding rather than narrowing behavior."""
+    MAX_LINE = MAX_MSG_BYTES
+
+
 class Daemon:
     def __init__(self):
         self.hw = Hardware()
@@ -1065,8 +1100,10 @@ class Daemon:
         # Endure E-core confinement (docs/ECORE-POWER.md). Hypervisor guard:
         # under Xen, dom0's CPU topology is virtual — confining to "cpu 12-19"
         # pins nothing physical; placement belongs to the orchestrator there.
-        self._ecores = (None if os.path.exists("/sys/hypervisor/type")
-                        else little_cpus(self._cpu_siblings()))
+        _siblings = (None if os.path.exists("/sys/hypervisor/type")
+                     else self._cpu_siblings())
+        self._ecores = little_cpus(_siblings) if _siblings is not None else None
+        self._pcores = big_cpus(_siblings) if _siblings is not None else None
         self._confined = False          # are the slices confined right now?
         self._paused_units = []         # units we stopped for this confinement
         self._ecore_release(startup=True)   # crash recovery: never start wedged
@@ -1787,21 +1824,10 @@ class Daemon:
         """Publish a snapshot for the pill, readable only by root + the owner."""
         try:
             os.makedirs(RUN_DIR, exist_ok=True)
-            tmp = STATUS_PATH + ".tmp"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.status(), f)
-            os.replace(tmp, STATUS_PATH)
-            # chmod BEFORE chown: once the file belongs to the user, a root
-            # process without CAP_FOWNER (we only hold CAP_CHOWN) can no longer
-            # chmod it. Setting the mode while root still owns it always works.
             uid = self._status_target_uid()
-            os.chmod(STATUS_PATH, 0o640 if uid is not None else 0o644)
-            if uid is not None:
-                try:
-                    os.chown(STATUS_PATH, uid, -1)
-                except OSError:
-                    pass
+            sutra.write_status(STATUS_PATH, self.status(),
+                               owner=(uid, -1) if uid is not None else None,
+                               mode=0o640 if uid is not None else 0o644)
         except Exception as e:
             log(f"status write failed: {e}")
 
@@ -1810,6 +1836,10 @@ class Daemon:
             return {
                 "ok": True,
                 "version": self.version,
+                # epoch timestamp of this snapshot — lets a file reader (rotten-apple's
+                # inotify watcher) detect a stale file from a dead phanspeed, which a
+                # world-readable file that just stopped updating can't otherwise signal
+                "written_at": time.time(),
                 "emergency": self.emergency,
                 "on_battery": self.hw.on_battery(),
                 "mode": self.config["mode"],
@@ -1874,6 +1904,7 @@ class Daemon:
                     "dimmed": self._trim_dirty,
                     "ecores": self._confined,
                     "ecore_set": self._ecores,
+                    "pcore_set": self._pcores,
                     "paused_units": list(self._paused_units),
                 },
                 "power_balance": self._balance,
@@ -2076,67 +2107,35 @@ class Daemon:
             return resp
         return {"ok": False, "error": f"unknown cmd {cmd}"}
 
+    def dispatch(self, cmd, msg):
+        """sutra.ControlServer's calling convention (cmd, req) -> resp/None.
+        msg still carries "cmd" itself (never stripped), so handle_cmd's own
+        re-read of it is harmless; kept as the single source of the domain
+        command logic rather than duplicating it here."""
+        return self.handle_cmd(msg)
+
     # ---- socket ---- #
     def serve_socket(self):
-        try:
-            os.unlink(SOCK_PATH)
-        except FileNotFoundError:
-            pass
+        """Construct and start the control socket. Non-blocking: the actual
+        accept loop runs on sutra.ControlServer's own daemon thread, so this
+        returns immediately whether called directly or via
+        threading.Thread(target=self.serve_socket) (both are exercised —
+        the latter by tests/attack_socket.py)."""
         os.makedirs(RUN_DIR, exist_ok=True)
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(SOCK_PATH)
-        srv.listen(8)
-        srv.settimeout(1.0)
-        # Perms are a first gate; SO_PEERCRED below is the real authorization.
-        os.chmod(SOCK_PATH, 0o660)
         uid = self._status_target_uid()
-        if uid is not None:
-            try:
-                os.chown(SOCK_PATH, uid, -1)   # only this user (+root) can connect
-            except OSError:
-                pass
-        else:
-            os.chmod(SOCK_PATH, 0o666)         # no user known; rely on SO_PEERCRED
+        ctl = _PhanspeedControlServer(
+            SOCK_PATH, lambda u, _g: u in self.allowed_uids(), self.version,
+            self.dispatch, self.status,
+            socket_owner=(uid, -1) if uid is not None else None)
+        if uid is None:
+            # No seat owner known yet (e.g. daemon started before any user
+            # session exists) — sutra's default mode (0660, unchowned) would
+            # leave only root able to open the socket; widen and rely on
+            # SO_PEERCRED alone, the same fallback phanspeed always used.
+            os.chmod(SOCK_PATH, 0o666)
         log(f"listening on {SOCK_PATH}")
-        while not self._stop.is_set():
-            try:
-                conn, _ = srv.accept()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            with conn:
-                try:
-                    conn.settimeout(1.0)
-                    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
-                                            struct.calcsize("3i"))
-                    pid, uid, _gid = struct.unpack("3i", creds)
-                    if uid not in self.allowed_uids():
-                        log(f"DENIED connection from uid={uid} pid={pid}")
-                        resp = {"ok": False, "error": "unauthorized"}
-                        conn.sendall((json.dumps(resp) + "\n").encode())
-                        continue
-                    data = b""
-                    while b"\n" not in data:
-                        chunk = conn.recv(4096)
-                        if not chunk:
-                            break
-                        data += chunk
-                        if len(data) > MAX_MSG_BYTES:
-                            raise ValueError("message too large")
-                    if not data:
-                        continue
-                    msg = json.loads(data.split(b"\n", 1)[0])
-                    if not isinstance(msg, dict):
-                        raise ValueError("message must be a JSON object")
-                    resp = self.handle_cmd(msg)
-                except Exception as e:
-                    resp = {"ok": False, "error": str(e)}
-                try:
-                    conn.sendall((json.dumps(resp) + "\n").encode())
-                except OSError:
-                    pass
-        srv.close()
+        ctl.start()
+        self._ctl = ctl
 
     # ---- lifecycle ---- #
     def restore(self):
@@ -2165,7 +2164,7 @@ class Daemon:
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
 
-        threading.Thread(target=self.serve_socket, daemon=True).start()
+        self.serve_socket()
         log("control loop started")
         while not self._stop.is_set():
             try:

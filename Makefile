@@ -1,7 +1,7 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := extension/phanspeed@asuramaya
 
-.PHONY: help install uninstall lint test pack deb check verify-unit clean
+.PHONY: help install uninstall lint test pack deb check verify-unit check-sutra clean
 
 help:
 	@echo "PhanSpeed targets:"
@@ -30,8 +30,32 @@ verify-unit:
 	@systemd-analyze verify ./systemd/phanspeed.service 2>&1 \
 		| grep -v 'not executable' | { ! grep . ; } && echo "unit OK"
 
-check: lint verify-unit
-	python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update diag.py
+# drift guard for the vendored sutra copy: integrity (hash matches what
+# vendor.sh recorded — the copy wasn't hand-edited) always runs; freshness
+# (diff against the canonical source) only when that checkout is present,
+# which it normally isn't in CI.
+check-sutra:
+	@ver=$$(cut -d' ' -f1 bin/sutra.version); \
+	sha=$$(awk '{print $$NF}' bin/sutra.version); \
+	actual=$$(sha256sum bin/sutra.py | cut -d' ' -f1); \
+	if [ "$$sha" != "$$actual" ]; then \
+	    echo "check-sutra FAIL: bin/sutra.py doesn't match bin/sutra.version" \
+	         "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh bin)"; \
+	    exit 1; \
+	fi; \
+	echo "check-sutra: integrity ok (sutra $$ver, sha256 $$sha)"; \
+	canon="$$HOME/code/REPOS/sutra/sutra.py"; \
+	if [ -f "$$canon" ]; then \
+	    if cmp -s bin/sutra.py "$$canon"; then \
+	        echo "check-sutra: freshness ok (matches canonical)"; \
+	    else \
+	        echo "check-sutra FAIL: bin/sutra.py differs from canonical $$canon (re-vendor)"; \
+	        exit 1; \
+	    fi; \
+	fi
+
+check: check-sutra lint verify-unit
+	python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update bin/sutra.py diag.py
 	python3 tests/test_validation.py
 	python3 tests/test_signing.py
 	node --check $(EXT)/extension.js

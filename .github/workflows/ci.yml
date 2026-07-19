@@ -11,8 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: sutra drift guard (integrity)
+        run: make check-sutra
+
       - name: Python compiles
-        run: python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update diag.py
+        run: python3 -m py_compile bin/phanspeedd bin/phanspeed bin/phanspeed-tune bin/phanspeed-update bin/sutra.py diag.py
 
       - name: Config validation (fuzz, hardware-free)
         run: python3 tests/test_validation.py

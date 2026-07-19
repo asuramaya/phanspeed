@@ -26,6 +26,10 @@ for b in phanspeedd phanspeed phanspeed-healthcheck phanspeed-tune phanspeed-upd
     install -m 0755 "$SRC/bin/$b" "$ROOT/usr/bin/$b"
 done
 
+# vendored sutra backbone -> sibling of the bins that import it (they add
+# their own directory to sys.path automatically; not executable itself)
+install -m 0644 "$SRC/bin/sutra.py" "$ROOT/usr/bin/sutra.py"
+
 # systemd units -> /lib/systemd/system, rewriting /usr/local/bin -> /usr/bin
 for u in phanspeed.service phanspeed-healthcheck.service phanspeed-healthcheck.timer \
          phanspeed-update.service phanspeed-update.timer; do

@@ -15,9 +15,14 @@ import json
 import math
 import os
 import random
+import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# phanspeedd imports sutra as a sibling (the vendored layout); a direct
+# SourceFileLoader load bypasses the sys.path[0]-is-the-script's-dir trick a
+# normal `bin/phanspeedd` invocation gets for free, so bin/ needs adding here.
+sys.path.insert(0, os.path.join(HERE, "bin"))
 loader = machinery.SourceFileLoader("phanspeedd", os.path.join(HERE, "bin", "phanspeedd"))
 spec = util.spec_from_loader("phanspeedd", loader)
 m = util.module_from_spec(spec)
@@ -326,6 +331,15 @@ assert m.little_cpus([(c, str(c)) for c in range(8)]) is None
 assert m.little_cpus([]) is None
 # unreadable sibling files are skipped, not misclassified
 assert m.little_cpus([(0, ""), (1, None), (2, "2"), (3, "3-4")]) == "2"
+
+# big_cpus mirrors little_cpus for the P-core (HT-pair) side
+assert m.big_cpus(SIB_12900H) == "0-11"
+assert m.big_cpus([(0, "0-1"), (1, "0-1"), (4, "4"), (5, "5"), (9, "9")]) \
+    == "0-1"
+assert m.big_cpus([(c, f"{c & ~1}-{(c & ~1) + 1}") for c in range(8)]) is None
+assert m.big_cpus([(c, str(c)) for c in range(8)]) is None
+assert m.big_cpus([]) is None
+assert m.big_cpus([(0, ""), (1, None), (2, "2"), (3, "3-4")]) == "3"
 
 # trigger matrix: endure + battery + intensity>=3 + enabled + hybrid — only then
 W = m.ecores_wanted

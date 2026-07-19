@@ -4,6 +4,56 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.30.0] — 2026-07-19
+
+### Changed
+- **Adopted the sutra backbone (behavior-preserving).** Vendored
+  `bin/sutra.py` + `bin/sutra.version` (sutra 0.1.0) — phanspeed is the
+  fourth pill onto the shared runtime skeleton (ByeByte piloted it, coldspot
+  followed), so a security fix to the control socket now lands once across
+  the family instead of six times. `write_status` → `sutra.write_status`
+  (unchanged final permissions/ownership; the tmp file is chmod+chowned
+  *before* the atomic rename now, closing a small window phanspeed's old
+  code left where the file briefly had the wrong mode after replace). The
+  hand-rolled `Control`/`serve_socket` SO_PEERCRED socket class is gone —
+  `sutra.ControlServer` owns the security seam now, driven by a `dispatch`
+  method carrying the unchanged get/set/pin/unpin logic (ping/status are
+  sutra's job for free). `allow_uids` stays a **custom authz closure** over
+  the existing `allowed_uids()` method rather than `sutra.allow_uids()`'s
+  static-set helper — phanspeed's allow-list is reconfigurable at runtime via
+  `cmd:set` and has a seat-owner-detection fallback, neither of which a
+  fixed snapshot set could express. `load_config`/`sanitize_config` are
+  **deliberately NOT adopted** — sutra's generic clamps can't express
+  phanspeed's hardware-dependent validation (profile/sensor choices
+  discovered at runtime, cross-field invariants like
+  `emergency_clear_temp < emergency_temp`, the hard 95°C failsafe ceiling);
+  forcing that mapping would have been a real loss, not a refactor, so it
+  stays domain logic, same as the pin/mission/endure code sutra was never
+  meant to own.
+  Two known, deliberate, cosmetic wire-format changes from adopting the
+  shared seam: an unauthorized peer now gets `{"error": "PermissionError"}`
+  instead of the old bespoke `{"ok": false, "error": "unauthorized"}`; other
+  hostile-input exceptions frame as `{"error": "<ExceptionClassName>"}`
+  instead of the exception's message text. Overridden on purpose: sutra's
+  default 4096-byte message cap is sized for the smaller pills, so a local
+  `_PhanspeedControlServer` subclass restores phanspeed's existing, larger,
+  documented `MAX_MSG_BYTES` (64KiB) ceiling instead of silently narrowing
+  what a legitimate `set` command may carry.
+  `make check-sutra` (integrity always, freshness when the canonical
+  checkout is present) is wired into CI and the front of `make check`;
+  `make deb` now ships `bin/sutra.py` alongside the other binaries.
+  `make check` (incl. the adversarial `make test` fuzz suite, run manually
+  on hardware) stays green throughout — same socket contract, same
+  status.json shape, same config semantics.
+- **`status.json` gains `written_at` (epoch) and `endure.pcore_set`**
+  (rotten-apple's ask, threads 339/594/599): `written_at` lets an inotify
+  watcher tell a stale file — a phanspeed that died without cleaning up —
+  from steady state, which mtime alone can't distinguish reliably.
+  `pcore_set` is read directly (a new `big_cpus()` alongside the existing
+  `little_cpus()`) rather than computed as `ecore_set`'s complement, so a
+  consumer never has to guess or risk drift on a future asymmetric-core
+  layout.
+
 ## [0.29.5] — 2026-07-17
 
 ### Changed
