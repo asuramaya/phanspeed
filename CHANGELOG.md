@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.30.1] — 2026-07-19
+
+### Added
+- **Release transition (RELEASE.md, the fleet's ratified release doctrine):**
+  ported coldspot's release shape. `.github/workflows/release.yml` — tag
+  triggered, verifies the tag matches `VERSION`, builds the `.deb`
+  (`packaging/build-deb.sh`) and a `git archive` release tarball (new
+  `.gitattributes` keeps CI/dev files out of it), folds both into the
+  existing `SHA256SUMS` manifest as one file, and publishes all three assets
+  unsigned — no signing step in CI, ever; that's the whole point. `tools/
+  sync-signers.sh` + `make sync-signers` (operator-only, do not run
+  casually): rebuilds `release-signing/allowed_signers` **and**
+  `install.sh`'s embedded `RELEASE_ALLOWED_SIGNERS` twin, byte-identical, in
+  one act, always a full rebuild from all 4 canonical keys at
+  `~/.ssh/asuramaya-master/` — never an append. `.github/workflows/
+  signing-sync.yml` checks the anchor and its embedded copy never drift
+  (internal consistency only — the canonical key home lives outside every
+  repo, unreachable from CI by design).
+- **Finished the `-I`/`-n` principal/namespace fix** flagged in v0.30.0's
+  reconciliation but not yet landed: `bin/phanspeed-update`'s
+  `verify_signature()` takes `principal` and `namespace` as distinct
+  parameters now (`SIGN_PRINCIPAL = "phanspeed"`, `SIGN_NAMESPACE =
+  "phanspeed-release"`), `install.sh`'s embedded verify call matches
+  (`-I phanspeed -n phanspeed-release`), and `release-signing/
+  allowed_signers`'s line format gains the fleet-standard `pills-tag`
+  namespace alongside `phanspeed-release`. `RELEASE_ALLOWED_SIGNERS` in
+  `install.sh` is now single-quoted so it can hold the anchor's full
+  multi-line, multi-key content verbatim once armed.
+  Tags restart at phanspeed's current `VERSION` from here forward (ratified
+  2026-07-19) — the historical 0.9.0→0.29.x gap is never back-tagged.
+
 ## [0.30.0] — 2026-07-19
 
 ### Changed

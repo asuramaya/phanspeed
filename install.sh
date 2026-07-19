@@ -18,9 +18,11 @@ EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 # travel embedded in whichever copy of this script is currently executing,
 # not be read from a file that hasn't been fetched yet (that would mean
 # trusting the very release being verified). Empty = no key provisioned yet;
-# falls back to SHA256-only with a warning, same as phanspeed-update. Keep in
-# sync with release-signing/allowed_signers when a real key lands there.
-RELEASE_ALLOWED_SIGNERS=""
+# falls back to SHA256-only with a warning, same as phanspeed-update.
+# Single-quoted (not double) so it can hold the anchor's full multi-line,
+# multi-key content verbatim, no escaping — `make sync-signers` is what
+# keeps this in sync with release-signing/allowed_signers, never hand-edit.
+RELEASE_ALLOWED_SIGNERS=''
 
 # Bootstrap for the one-line install (`curl -fsSL .../install.sh | bash`): if
 # we aren't sitting next to the source tree, fetch+verify the release's OWN
@@ -64,7 +66,7 @@ if [[ ! -f "$SRC/bin/phanspeedd" ]]; then
       || { echo "signing key is pinned but the release has no SHA256SUMS.sig — refusing to install unsigned."; exit 1; }
     curl -fsSL "$sig_url" -o "$TMP/SHA256SUMS.sig" || { echo "SHA256SUMS.sig download failed"; exit 1; }
     printf '%s\n' "$RELEASE_ALLOWED_SIGNERS" > "$TMP/allowed_signers"
-    ssh-keygen -Y verify -f "$TMP/allowed_signers" -I phanspeed-release \
+    ssh-keygen -Y verify -f "$TMP/allowed_signers" -I phanspeed \
       -n phanspeed-release -s "$TMP/SHA256SUMS.sig" < "$TMP/SHA256SUMS" \
       || { echo "SIGNATURE VERIFICATION FAILED — aborting."; exit 1; }
     echo "signature verified."

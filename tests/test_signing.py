@@ -25,7 +25,8 @@ if subprocess.run(["ssh-keygen", "-Y", "sign"], capture_output=True).returncode 
     print("ssh-keygen not found — skipping signing tests")
     sys.exit(0)
 
-NS = "phanspeed-release"
+NS = m.SIGN_NAMESPACE
+PRINCIPAL = m.SIGN_PRINCIPAL
 
 # --- the shipped placeholder must be empty: no key provisioned yet --------
 with open(os.path.join(HERE, "release-signing", "allowed_signers")) as f:
@@ -56,7 +57,7 @@ with tempfile.TemporaryDirectory() as td:
         pub = f.read().strip()
     signers = os.path.join(td, "allowed_signers")
     with open(signers, "w") as f:
-        f.write(f"{NS} {pub}\n")
+        f.write(f"{PRINCIPAL} {pub}\n")
     assert m.has_signing_key(signers) is True
     print("has_signing_key() OK")
 
@@ -86,5 +87,12 @@ with tempfile.TemporaryDirectory() as td:
     # wrong namespace must fail (binds the signature to its intended use)
     assert m.verify_signature(data, sig, signers, "some-other-namespace") is False
     print("verify_signature(): namespace mismatch rejected OK")
+
+    # wrong principal must fail too (principal and namespace are independent
+    # axes now — the fix for the conflation the fleet's signing ceremony
+    # caught: principal=stable identity, namespace=role)
+    assert m.verify_signature(data, sig, signers, NS,
+                              principal="some-other-principal") is False
+    print("verify_signature(): principal mismatch rejected OK")
 
 print("release-signing verification OK")

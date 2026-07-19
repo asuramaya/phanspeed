@@ -1,18 +1,19 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := extension/phanspeed@asuramaya
 
-.PHONY: help install uninstall lint test pack deb check verify-unit check-sutra clean
+.PHONY: help install uninstall lint test pack deb check verify-unit check-sutra sync-signers clean
 
 help:
 	@echo "PhanSpeed targets:"
-	@echo "  make install     install daemon + extension (sudo)"
-	@echo "  make uninstall   remove everything (sudo)"
-	@echo "  make check       run all static checks (CI-equivalent)"
-	@echo "  make lint        ruff + shellcheck"
-	@echo "  make test        adversarial fuzz suite (needs Dell hardware)"
-	@echo "  make pack        build the extensions.gnome.org zip"
-	@echo "  make deb         build the .deb package"
-	@echo "  make clean       remove build artifacts"
+	@echo "  make install       install daemon + extension (sudo)"
+	@echo "  make uninstall     remove everything (sudo)"
+	@echo "  make check         run all static checks (CI-equivalent)"
+	@echo "  make lint          ruff + shellcheck"
+	@echo "  make test          adversarial fuzz suite (needs Dell hardware)"
+	@echo "  make pack          build the extensions.gnome.org zip"
+	@echo "  make deb           build the .deb package"
+	@echo "  make sync-signers  rebuild release-signing/allowed_signers from the canonical keys (see docs/RELEASE-SIGNING.md — do NOT run casually)"
+	@echo "  make clean         remove build artifacts"
 
 install:
 	sudo ./install.sh
@@ -24,7 +25,7 @@ lint:
 	ruff check .
 	shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck \
 		packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm \
-		packaging/debian/postrm packaging/activate-uuid-migration.sh
+		packaging/debian/postrm packaging/activate-uuid-migration.sh tools/sync-signers.sh
 
 verify-unit:
 	@systemd-analyze verify ./systemd/phanspeed.service 2>&1 \
@@ -64,6 +65,9 @@ check: check-sutra lint verify-unit
 
 test:
 	python3 tests/attack_socket.py
+
+sync-signers:
+	bash tools/sync-signers.sh
 
 pack:
 	./make-extension-zip.sh

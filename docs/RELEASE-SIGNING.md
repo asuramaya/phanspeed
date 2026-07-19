@@ -1,15 +1,22 @@
 # Release signing
 
-Status: **both paths verify (v0.29.4).** `install.sh`'s curl-pipe-bash
-bootstrap no longer installs from GitHub's auto-generated (uncovered) source
-tarball — it fetches and verifies the release's own `.deb` + `SHA256SUMS`
-directly, same as `phanspeed-update`, then `dpkg -i`s it. Neither path
-enforces a *signature* yet: `release-signing/allowed_signers` (and its
-install.sh-embedded twin, `RELEASE_ALLOWED_SIGNERS`) are currently empty — no
-signing key has been provisioned. Until one is, both degrade to SHA256-only
-with a printed warning. The moment a real key exists in both places and a
-release ships a matching `SHA256SUMS.sig`, verification becomes fail-closed
-automatically — no further code changes needed.
+Repo-specific notes. The canonical, fleet-wide doctrine lives in
+`~/code/REPOS/RELEASE.md` (kast · phanspeed · coldspot · ByeByte · RAMstein ·
+gestalt · sutra) — read that first; this file is phanspeed's application of
+it.
+
+Status (v0.30.0): both `install.sh`'s curl-pipe-bash bootstrap and
+`bin/phanspeed-update` fetch and verify the release's own `.deb` +
+`SHA256SUMS` (now a manifest covering the `.deb` **and** the release
+tarball, one file, `.github/workflows/release.yml`), then `dpkg -i` /
+install. Neither path enforces a *signature* yet: `release-signing/
+allowed_signers` (and its install.sh-embedded twin, `RELEASE_ALLOWED_SIGNERS`)
+are currently empty — the anchor is unarmed. Until it's armed, both degrade
+to SHA256-only with a printed warning. Arming happens in the SAME act as
+phanspeed's first signed release (`make sync-signers`, below) — never
+before, per RELEASE.md's sequencing rule (arming early only bricks
+`phanspeed-update` where a fail-closed verifier is already deployed; harmless
+here since none is, but the doctrine is repo-uniform on purpose).
 
 ## Why this exists
 
@@ -33,41 +40,63 @@ would need the physical key in hand.
 — CI compromise is exactly the threat this defends against. Releases are
 signed by hand, from the maintainer's machine, with the hardware key attached.
 
-## One-time setup (maintainer, needs a FIDO2 key attached)
+## Principal vs. namespace (fleet doctrine, ratified 2026-07-16/17)
+
+**Principal = stable identity. Namespace = role.** The fleet's signing
+ceremony (rotten-apple/Ra) settled this after finding a real footgun:
+`ssh-keygen -t ed25519-sk` mints a *new* hardware credential per invocation,
+but copying a handle file to another repo does not — it's the same
+credential everywhere it's copied, and the pubkey/fingerprint is the only
+real tell. So per-project resident credentials buy ~nothing (hardware-backed
+private material never leaves the token regardless) while burning through
+the ~25-resident-credential cap on the physical key for no benefit. The
+fleet's actual model: the operator's existing FIDO2 identity (four resident
+credentials, enrolled once for rotten-apple) **is** the one signing identity
+for every pill. Isolation between repos/roles comes entirely from the SSH
+*namespace* (`-n <namespace>` at sign and verify time, e.g. `phanspeed-release`
+vs `rotten-apple-release`) plus each repo's own `allowed_signers` (which
+keys are trusted, revocable per repo) — never from minting a distinct
+credential per project.
+
+This repo's docs used to conflate the two: `phanspeed-release` was used as
+both the SSH principal (`-I`) *and* the namespace (`-n`), and the old setup
+steps here generated a brand-new resident key just for phanspeed. Fixed:
+principal is `phanspeed` (this repo's stable identity, matching the
+convention every other pill uses — its own project name), namespace is
+`phanspeed-release` (paired with the fleet-shared `pills-tag` namespace —
+RELEASE.md's format is `<repo> namespaces="<repo>-release,pills-tag" ...`).
+The key material to pin is **reused** from the fleet's already-enrolled
+identity via `make sync-signers`, never freshly minted.
+
+## Arming the anchor (operator, first signed release only — `make sync-signers`)
 
 ```sh
-# Generate a resident, touch-required key. Store the private handle
-# somewhere durable (it's tiny — the real secret stays on the hardware token).
-ssh-keygen -t ed25519-sk -O resident -O verify-required \
-  -f release-signing/id_release -C "phanspeed-release"
-
-# Populate the trust anchor that ships in the repo and gets pinned on every
-# install. Format: "<principal> <keytype> <base64-key>".
-echo "phanspeed-release $(cut -d' ' -f1,2 release-signing/id_release.pub)" \
-  > release-signing/allowed_signers
-
-# install.sh's curl-pipe-bash bootstrap only ever fetches ONE file (itself),
-# so it can't read the sibling allowed_signers file — the same line has to
-# be embedded directly in install.sh's RELEASE_ALLOWED_SIGNERS constant too.
-# Keep both in sync on every rotation.
-sed -i "s|^RELEASE_ALLOWED_SIGNERS=.*|RELEASE_ALLOWED_SIGNERS=\"$(cat release-signing/allowed_signers)\"|" \
-  install.sh
-
-# The .pub file and allowed_signers are safe to commit. id_release (the
-# handle) is NOT secret by itself without the hardware key, but keep it out
-# of the repo anyway — store it with the key, not in git.
+make sync-signers
 ```
 
-## Per-release signing (maintainer, needs the FIDO2 key attached + a touch)
+`tools/sync-signers.sh` rebuilds `release-signing/allowed_signers` — always a
+full rebuild from **all** canonical keys, never an append (RA's first
+ceremony left 3 of 4 keys unpinned by appending one at a time) — from
+`~/.ssh/asuramaya-master/*.pub` (exactly 4, refuses otherwise), and syncs the
+byte-identical copy into `install.sh`'s `RELEASE_ALLOWED_SIGNERS` in the same
+act (`.github/workflows/signing-sync.yml` checks the two never drift).
+`allowed_signers` is safe to commit — public keys only. Per RELEASE.md's
+"arm before tag" ordering: `make sync-signers` → commit → tag → CI builds →
+operator signs, so the first *sealed* artifacts carry the anchor from birth.
+
+## Per-release signing (operator, needs a FIDO2 key attached + a touch)
 
 ```sh
-# Sign the manifest, not every binary — SHA256SUMS already covers the .deb
-# via its checksum entry, so signing it transitively covers the release.
-ssh-keygen -Y sign -f release-signing/id_release.pub -n phanspeed-release \
-  dist/SHA256SUMS
-# -> produces dist/SHA256SUMS.sig
+# Sign the manifest, not every artifact — SHA256SUMS covers the .deb AND the
+# release tarball (release.yml), so signing it transitively covers both.
+# -f names any ONE of the four canonical key handles (any one signs; which
+# is just whichever hardware key is physically attached right now).
+gh release download vX.Y.Z -p SHA256SUMS   # sign the PUBLISHED bytes, not local ones
+ssh-keygen -Y sign -f ~/.ssh/asuramaya-master/id_asuramaya_master_1 \
+  -n phanspeed-release SHA256SUMS
+# -> produces SHA256SUMS.sig
 
-gh release upload vX.Y.Z dist/SHA256SUMS.sig
+gh release upload vX.Y.Z SHA256SUMS.sig
 ```
 
 ## Verification (client side — already built, v0.29.2 + v0.29.4)
@@ -85,7 +114,7 @@ Both `bin/phanspeed-update` and `install.sh`'s curl-pipe-bash bootstrap:
 
 ```sh
 ssh-keygen -Y verify -f release-signing/allowed_signers \
-  -I phanspeed-release -n phanspeed-release \
+  -I phanspeed -n phanspeed-release \
   -s dist/SHA256SUMS.sig < dist/SHA256SUMS
 ```
 
@@ -96,9 +125,13 @@ failure — there is no "install anyway" path once a key is provisioned.
 
 `install.sh`'s curl-pipe-bash bootstrap used to fetch GitHub's
 **auto-generated** `tarball_url` (a live source-archive snapshot), not the
-`.deb` release asset — and `SHA256SUMS` only ever contains the `.deb`'s hash
-(`packaging/build-deb.sh` writes exactly one line), so that tarball had no
-checksum coverage at all, signing or not.
+`.deb` release asset — and at the time, `SHA256SUMS` only ever contained the
+`.deb`'s hash (`packaging/build-deb.sh` wrote exactly one line), so that
+tarball had no checksum coverage at all, signing or not. (Since v0.30.0's
+`release.yml`, `SHA256SUMS` is the family-standard manifest covering both the
+`.deb` and phanspeed's own `git archive` tarball — a real release asset now,
+not GitHub's auto-generated one — but the lookup below only ever needed the
+`.deb`'s line, so nothing here changed.)
 
 Fixed by changing what the bootstrap installs from: it now fetches the
 release's own `.deb` + `SHA256SUMS` (+ `SHA256SUMS.sig` once provisioned) —

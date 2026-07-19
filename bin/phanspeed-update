@@ -34,6 +34,12 @@ REPO = "asuramaya/phanspeed"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PKG = "phanspeed"
 VERSION_FILE = "/usr/share/phanspeed/VERSION"
+# Fleet signing doctrine (Ra's ceremony, ratified fleet-wide): principal =
+# stable identity, namespace = role. The operator's shared FIDO2 identity
+# signs for every pill under its own repo-named principal; the namespace is
+# what scopes one signature to one purpose within that repo (replay/context
+# isolation), never the other way around.
+SIGN_PRINCIPAL = "phanspeed"
 SIGN_NAMESPACE = "phanspeed-release"
 # Installed (.deb) location first — matches VERSION_FILE's own convention —
 # falling back to the repo-relative path for a source checkout / dev testing.
@@ -63,7 +69,7 @@ def has_signing_key(path=None):
 
 
 def verify_signature(data, sig_bytes, allowed_signers=None,
-                     namespace=SIGN_NAMESPACE):
+                     namespace=SIGN_NAMESPACE, principal=SIGN_PRINCIPAL):
     """True/False — does `sig_bytes` verify against the pinned key over `data`?
     Caller must only call this once has_signing_key() is True; with no key
     provisioned there is nothing to verify against."""
@@ -74,7 +80,7 @@ def verify_signature(data, sig_bytes, allowed_signers=None,
         r = subprocess.run(
             ["ssh-keygen", "-Y", "verify", "-f",
              allowed_signers or allowed_signers_path(),
-             "-I", namespace, "-n", namespace, "-s", sig_path],
+             "-I", principal, "-n", namespace, "-s", sig_path],
             input=data, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if r.returncode != 0:
             sys.stderr.write(r.stderr.decode(errors="replace"))
