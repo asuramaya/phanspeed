@@ -5,7 +5,7 @@ set -euo pipefail
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
-EXT_UUID="phanspeed@local"
+EXT_UUID="phanspeed@asuramaya"
 if [[ $EUID -ne 0 ]]; then exec sudo -E bash "$0" "$@"; fi
 
 echo "== uninstalling PhanSpeed =="

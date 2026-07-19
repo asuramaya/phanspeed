@@ -1,5 +1,5 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
-EXT := extension/phanspeed@local
+EXT := extension/phanspeed@asuramaya
 
 .PHONY: help install uninstall lint test pack deb check verify-unit clean
 
@@ -24,7 +24,7 @@ lint:
 	ruff check .
 	shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck \
 		packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm \
-		packaging/debian/postrm
+		packaging/debian/postrm packaging/activate-uuid-migration.sh
 
 verify-unit:
 	@systemd-analyze verify ./systemd/phanspeed.service 2>&1 \

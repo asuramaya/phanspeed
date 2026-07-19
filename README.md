@@ -19,7 +19,7 @@ Settings pill** next to Wi-Fi and Bluetooth. Built and tested on a **Precision
 </p>
 
 <sub>Mockup of the expanded pill. To capture a real recording on Wayland:
-`gnome-extensions enable phanspeed@local`, open Quick Settings, then use the
+`gnome-extensions enable phanspeed@asuramaya`, open Quick Settings, then use the
 built-in screen recorder (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd>)
 and convert the WebM to GIF (e.g. `ffmpeg -i clip.webm docs/demo.gif`).</sub>
 
@@ -90,7 +90,7 @@ for a widget.
 ## Architecture
 
 ```
- GNOME Shell extension  (phanspeed@local — the pill, runs as you)
+ GNOME Shell extension  (phanspeed@asuramaya — the pill, runs as you)
     │  reads  /run/phanspeed/status.json   (0640, owner+root only)
     │  writes /run/phanspeed/control.sock  (owner+root, SO_PEERCRED-gated)
     ▼
@@ -141,7 +141,7 @@ asserts the failsafe invariants always hold). Run: `python3 tests/attack_socket.
 
 ```bash
 sudo apt install ./phanspeed_*.deb        # from a GitHub release, or `make deb`
-gnome-extensions enable phanspeed@local   # then log out/in once (Wayland)
+gnome-extensions enable phanspeed@asuramaya   # then log out/in once (Wayland)
 ```
 
 The package installs the daemon, healthcheck, auto-tuner, the system-wide
@@ -177,7 +177,7 @@ update via `git pull && ./install.sh`.)
 
 ```
 bin/phanspeedd                     root daemon (profile control, auto, failsafe)
-extension/phanspeed@local/         GNOME Shell Quick Settings extension
+extension/phanspeed@asuramaya/     GNOME Shell Quick Settings extension
 systemd/phanspeed.service          starts the daemon at boot
 diag.py                            one-shot hardware probe (proves RPM is locked)
 install.sh / uninstall.sh
@@ -205,7 +205,7 @@ systemctl status phanspeed           # daemon health
 journalctl -u phanspeed -f           # live log (profile changes, emergencies)
 cat /run/phanspeed/status.json       # what the pill sees
 cat /sys/firmware/acpi/platform_profile   # active profile right now
-gnome-extensions info phanspeed@local     # extension state
+gnome-extensions info phanspeed@asuramaya # extension state
 sudo phanspeedd --selftest                # verify controllable hardware
 systemctl status phanspeed-healthcheck.timer   # auto-restart watchdog
 ./uninstall.sh

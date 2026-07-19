@@ -16,6 +16,14 @@ if [ "$1" = configure ]; then
               /usr/local/bin/phanspeed-tune /usr/local/bin/phanspeed-update
         systemctl daemon-reload || true
     fi
+    # UUID migration phanspeed@local -> phanspeed@asuramaya: the old directory
+    # is an orphan once packaging installs under the new path (dpkg has no
+    # notion that the two paths are "the same" extension). Package-owned
+    # cleanup only; per-user enable/disable state is the operator's own call
+    # -- see packaging/activate-uuid-migration.sh.
+    if [ -d /usr/share/gnome-shell/extensions/phanspeed@local ]; then
+        rm -rf /usr/share/gnome-shell/extensions/phanspeed@local
+    fi
     systemctl enable --now phanspeed.service || true
     systemctl enable --now phanspeed-healthcheck.timer || true
     systemctl enable --now phanspeed-update.timer || true
@@ -23,7 +31,7 @@ if [ "$1" = configure ]; then
     # would sit inert until reboot — restart it so updates actually take effect
     systemctl try-restart phanspeed.service || true
     echo "PhanSpeed installed. Enable the pill for your user with:"
-    echo "    gnome-extensions enable phanspeed@local"
+    echo "    gnome-extensions enable phanspeed@asuramaya"
     echo "  (then log out/in once on Wayland), then auto-tune with:"
     echo "    sudo phanspeed-tune --target both --apply"
 fi

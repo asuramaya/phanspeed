@@ -31,7 +31,7 @@ cat /sys/firmware/acpi/platform_profile_choices
 sudo python3 diag.py     # if fan/profile control isn't working
 
 # extension
-gnome-extensions info phanspeed@local
+gnome-extensions info phanspeed@asuramaya
 ```
 
 <!-- Paste relevant output above. -->

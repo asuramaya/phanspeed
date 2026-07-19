@@ -7,7 +7,7 @@ keep changes simple and self-contained.
 
 ```
 bin/phanspeedd                 root daemon (pure Python stdlib, no deps)
-extension/phanspeed@local/     GNOME Shell Quick Settings extension (GJS, ESM)
+extension/phanspeed@asuramaya/ GNOME Shell Quick Settings extension (GJS, ESM)
 systemd/phanspeed.service      hardened systemd unit
 tests/attack_socket.py         adversarial test harness
 diag.py                        hardware probe (proves what your Dell allows)
@@ -24,10 +24,10 @@ python3 tests/attack_socket.py     # must print "ALL ATTACKS DEFENDED"
 python3 -m py_compile bin/phanspeedd
 ```
 
-For the extension, after editing `extension/phanspeed@local/extension.js`:
+For the extension, after editing `extension/phanspeed@asuramaya/extension.js`:
 
 ```bash
-node --check extension/phanspeed@local/extension.js   # syntax
+node --check extension/phanspeed@asuramaya/extension.js   # syntax
 # install + log out/in (Wayland) to load it, then watch:
 journalctl -f -o cat /usr/bin/gnome-shell             # extension logs
 ```

@@ -1,5 +1,5 @@
 {
-  "uuid": "phanspeed@local",
+  "uuid": "phanspeed@asuramaya",
   "name": "PhanSpeed",
   "description": "Dell thermal/power control as a Quick Settings pill \u2014 two missions (\ud83d\udd25 Perf, \ud83d\udd0b Endure) with an intensity dial; \ud83e\uddca Cool still works via the CLI. Endure keeps the laptop alive on a power trickle: closed-loop CPU cap to break-even, dGPU sleep, panel/kbd trims. Requires the phanspeedd daemon (https://github.com/asuramaya/phanspeed).",
   "shell-version": [

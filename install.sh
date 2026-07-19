@@ -9,7 +9,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonex
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
-EXT_UUID="phanspeed@local"
+EXT_UUID="phanspeed@asuramaya"
 EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 
 # Pinned release-signing key (docs/RELEASE-SIGNING.md), for the bootstrap

@@ -23,16 +23,16 @@ jobs:
           ruff check .
 
       - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm
+        run: shellcheck install.sh uninstall.sh make-extension-zip.sh bin/phanspeed-healthcheck packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm packaging/activate-uuid-migration.sh
 
       - name: Shell scripts parse
         run: bash -n install.sh && bash -n uninstall.sh
 
       - name: Extension JS syntax
-        run: node --check extension/phanspeed@local/extension.js
+        run: node --check extension/phanspeed@asuramaya/extension.js
 
       - name: metadata.json is valid
-        run: python3 -c "import json; json.load(open('extension/phanspeed@local/metadata.json'))"
+        run: python3 -c "import json; json.load(open('extension/phanspeed@asuramaya/metadata.json'))"
 
       - name: systemd unit verifies
         run: |

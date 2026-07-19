@@ -5,9 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 mkdir -p dist
-gnome-extensions pack extension/phanspeed@local --force --out-dir dist
+gnome-extensions pack extension/phanspeed@asuramaya --force --out-dir dist
 
-zip="dist/phanspeed@local.shell-extension.zip"
+zip="dist/phanspeed@asuramaya.shell-extension.zip"
 echo "built: $zip"
 echo "contents:"
 unzip -l "$zip"

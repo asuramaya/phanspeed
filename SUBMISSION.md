@@ -10,7 +10,7 @@ to install the daemon first (the description already links the repo).
 
 ```bash
 ./make-extension-zip.sh
-# -> dist/phanspeed@local.shell-extension.zip
+# -> dist/phanspeed@asuramaya.shell-extension.zip
 ```
 
 Upload it at <https://extensions.gnome.org/upload/> while signed in.

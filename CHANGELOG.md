@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.29.5] — 2026-07-17
+
+### Changed
+- **Extension UUID migrated: `phanspeed@local` → `phanspeed@asuramaya`**
+  (Alfred/bytebye charter, staged on branch `uuid-migration-asuramaya`, now
+  landed to main). Every reference in the repo — `metadata.json`'s `uuid`
+  field, `install.sh`/`uninstall.sh`, `packaging/build-deb.sh`,
+  `packaging/debian/postinst`, `make-extension-zip.sh`, the Makefile's `EXT`
+  var, CI, and the docs — now points at `phanspeed@asuramaya`. `postinst`
+  gained an orphan-cleanup block that removes a leftover system-wide
+  `phanspeed@local` install so the two UUIDs never coexist unexpectedly.
+  **This release does NOT touch a running install.** phanspeed is a live
+  daily-driver GNOME Shell pill; renaming a deployed extension's UUID forces
+  a disable-old/enable-new + relogin, which only the operator should trigger
+  on their own schedule. A new script, `packaging/activate-uuid-migration.sh`,
+  is the one-command cutover: it verifies `phanspeed@asuramaya` is installed
+  system-wide, removes any shadowing `~/.local/share/gnome-shell/extensions/
+  phanspeed@local` copy (a source install's known shadow-gotcha, see README),
+  disables the old UUID, enables the new one, and reminds the operator that
+  GNOME Shell only picks up a new extension UUID after a Wayland relogin.
+  Run it as your normal desktop user (not root) once this release is
+  installed, whenever you're ready to log out and back in.
+
 ## [0.29.4] — 2026-07-14
 
 ### Fixed

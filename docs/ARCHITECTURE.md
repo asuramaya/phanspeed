@@ -29,7 +29,7 @@ clamp (BD PROCHOT) — see the control loop below.
 ## Components
 
 ```
- phanspeed@local  (GNOME Shell extension, GJS/ESM, runs as the user)
+ phanspeed@asuramaya  (GNOME Shell extension, GJS/ESM, runs as the user)
    │  reads  /run/phanspeed/status.json   (owner+root, 0640, polled every 2s)
    │  writes /run/phanspeed/control.sock  (async; SO_PEERCRED + allow_uids gated)
    ▼

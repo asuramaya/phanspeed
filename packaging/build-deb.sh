@@ -17,7 +17,7 @@ echo "== building ${PKG} ${VER} =="
 install -d "$ROOT/DEBIAN" \
           "$ROOT/usr/bin" \
           "$ROOT/lib/systemd/system" \
-          "$ROOT/usr/share/gnome-shell/extensions/phanspeed@local" \
+          "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya" \
           "$ROOT/usr/share/phanspeed" \
           "$ROOT/etc/phanspeed"
 
@@ -34,10 +34,10 @@ for u in phanspeed.service phanspeed-healthcheck.service phanspeed-healthcheck.t
 done
 
 # GNOME extension -> system-wide (users still `gnome-extensions enable`)
-install -m 0644 "$SRC/extension/phanspeed@local/extension.js" \
-        "$ROOT/usr/share/gnome-shell/extensions/phanspeed@local/extension.js"
-install -m 0644 "$SRC/extension/phanspeed@local/metadata.json" \
-        "$ROOT/usr/share/gnome-shell/extensions/phanspeed@local/metadata.json"
+install -m 0644 "$SRC/extension/phanspeed@asuramaya/extension.js" \
+        "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya/extension.js"
+install -m 0644 "$SRC/extension/phanspeed@asuramaya/metadata.json" \
+        "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya/metadata.json"
 
 # version marker (used by phanspeed-update as a dpkg-query fallback) + default config
 echo "$VER" > "$ROOT/usr/share/phanspeed/VERSION"
