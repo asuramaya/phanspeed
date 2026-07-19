@@ -22,7 +22,10 @@ EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 # Single-quoted (not double) so it can hold the anchor's full multi-line,
 # multi-key content verbatim, no escaping — `make sync-signers` is what
 # keeps this in sync with release-signing/allowed_signers, never hand-edit.
-RELEASE_ALLOWED_SIGNERS=''
+RELEASE_ALLOWED_SIGNERS='phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIAvqlv848gk9uzM40ZsFZTQeXsQKpxYaK4Fi8ubNl1H7AAAAFnNzaDphc3VyYW1heWEtbWFzdGVyLTE= ra-master-1
+phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIFJBKAsk6b4YR2UH/UZ1Rk24PxepTYNkF7zflo01AmlZAAAAFnNzaDphc3VyYW1heWEtbWFzdGVyLTI= ra-master-2
+phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIHTVqgo3ARbpTq04YlQksobfGIbBAw21nbE6HyeCPgxBAAAAFnNzaDphc3VyYW1heWEtbWFzdGVyLTM= ra-master-3
+phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIP15ZeSJYWryHN2WEHDlJbWk/vA+j5JFgb9RSzT1SHveAAAAFnNzaDphc3VyYW1heWEtbWFzdGVyLTQ= ra-master-4'
 
 # Bootstrap for the one-line install (`curl -fsSL .../install.sh | bash`): if
 # we aren't sitting next to the source tree, fetch+verify the release's OWN
