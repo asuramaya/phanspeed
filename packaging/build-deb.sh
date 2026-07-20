@@ -19,6 +19,8 @@ install -d "$ROOT/DEBIAN" \
           "$ROOT/lib/systemd/system" \
           "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya" \
           "$ROOT/usr/share/phanspeed" \
+          "$ROOT/usr/share/man/man1" \
+          "$ROOT/usr/share/man/man8" \
           "$ROOT/etc/phanspeed"
 
 # binaries -> /usr/bin
@@ -29,6 +31,10 @@ done
 # vendored sutra backbone -> sibling of the bins that import it (they add
 # their own directory to sys.path automatically; not executable itself)
 install -m 0644 "$SRC/bin/sutra.py" "$ROOT/usr/bin/sutra.py"
+
+# man pages
+install -m 0644 "$SRC/man/phanspeed.1" "$ROOT/usr/share/man/man1/phanspeed.1"
+install -m 0644 "$SRC/man/phanspeedd.8" "$ROOT/usr/share/man/man8/phanspeedd.8"
 
 # systemd units -> /lib/systemd/system, rewriting /usr/local/bin -> /usr/bin
 for u in phanspeed.service phanspeed-healthcheck.service phanspeed-healthcheck.timer \

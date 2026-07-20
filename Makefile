@@ -1,7 +1,7 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := extension/phanspeed@asuramaya
 
-.PHONY: help install uninstall lint test pack deb check verify-unit check-sutra clean
+.PHONY: help install uninstall lint attack test pack deb check verify-unit check-sutra clean
 
 help:
 	@echo "PhanSpeed targets:"
@@ -9,7 +9,7 @@ help:
 	@echo "  make uninstall   remove everything (sudo)"
 	@echo "  make check       run all static checks (CI-equivalent)"
 	@echo "  make lint        ruff + shellcheck"
-	@echo "  make test        adversarial fuzz suite (needs Dell hardware)"
+	@echo "  make attack      adversarial fuzz suite (needs Dell hardware; 'test' still works)"
 	@echo "  make pack        build the extensions.gnome.org zip"
 	@echo "  make deb         build the .deb package"
 	@echo "  make clean       remove build artifacts"
@@ -63,8 +63,13 @@ check: check-sutra lint verify-unit
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
 	@echo "all static checks passed"
 
-test:
+# the thorough adversarial pass (full cmd surface + oversized/garbage/nested/
+# stall) — canonical family verb (UNIFY.md row 6: `smoke attack check deb`);
+# `test` stays as a back-compat alias (README/CI history call it that).
+attack:
 	python3 tests/attack_socket.py
+
+test: attack
 
 pack:
 	./make-extension-zip.sh

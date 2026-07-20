@@ -1,0 +1,151 @@
+.TH PHANSPEED 1 "2026-07-20" "phanspeed 0.30.2" "phanspeed manual"
+.SH NAME
+phanspeed \- verb CLI for the phanspeed thermal/power daemon
+.SH SYNOPSIS
+.B phanspeed
+.RI [ verb ]
+.RI [ options ]
+.SH DESCRIPTION
+.B phanspeed
+talks to
+.BR phanspeedd (8)
+over its control socket and prints the answer. With no verb, it prints
+.BR help .
+.SH VERBS
+.TP
+.B status " [\-\-json]"
+Active profile or mission, CPU temp, power balance (on battery), dGPU
+state, power cap, EPP, turbo, and AC/battery.
+.TP
+.B doctor " [\-\-json]"
+Read-only firmware/thermal snapshot \(em changes nothing. Reports the
+BIOS thermal mode, turbo state, fan health, and the
+.B WATT CHOKE
+section: whether a software cap or a live PROCHOT clamp is limiting
+watts right now. Run as root to also sample live RAPL package watts and
+the staged BIOS ThermalManagement/TurboMode attributes.
+.TP
+.BI mission " " <cool| perf | endure | off>
+The three stances, plus
+.B off
+for legacy manual profile/power/EPP control.
+.B cool
+favors quiet and low heat,
+.B perf
+favors clock and throughput,
+.B endure
+favors battery runway (E-core confinement, dGPU sleep, unit pausing \(em
+see
+.BR phanspeedd (8)).
+A mission owns profile/power/EPP while active; setting a raw knob
+(profile, or the legacy
+.I mode
+field) drops the active mission back to
+.BR off .
+.TP
+.B survive
+Shortcut for
+.BR "mission endure" .
+.TP
+.BI intensity " " <0\-4| +| \->
+Lean within the active mission.
+.B +/\-
+step relative to the current value; a bare number sets it directly.
+Clamped 0\(en4.
+.TP
+.BI profile " " <quiet| balanced | cool | performance | auto>
+Legacy manual thermal profile.
+.B auto
+hands profile selection back to the daemon's own temperature-based
+state machine. Setting this drops any active mission.
+.TP
+.BI power " " <WATTS| auto | full>
+CPU package power cap (RAPL PL1).
+.B auto
+scales the cap with temperature;
+.B full
+(or
+.IR 0 )
+removes the cap entirely.
+.TP
+.BI epp " " <performance| balance_performance | balance_power | power | auto>
+Energy Performance Preference hint.
+.B auto
+leaves it alone (no override).
+.TP
+.B tune " [...]"
+Delegates to
+.BR phanspeed\-tune (8)
+(needs root) \(em runs the RAPL auto-tuner that derives the AC and
+battery power-cap operating points.
+.TP
+.B update " [\-\-check] [\-\-json]"
+Delegates to
+.BR phanspeed\-update (1).
+.TP
+.B version
+Print the installed version.
+.TP
+.B help
+Print the verb summary above.
+.SH EXAMPLES
+.EX
+$ phanspeed status
+mission : endure  (intensity 3/4)  \(em owns profile/power/epp
+profile : quiet  (mode auto)  ← mission
+cpu temp: 52°C
+balance : \-4.2 W ▼ draining  ~3h12m  (in 0W, draw 4.2W)
+dgpu    : asleep
+cpu pwr : cap 25 W (mission)  (battery base)
+epp     : balance_power  (AC cfg auto, battery balance_power)
+turbo   : off
+battery : yes
+
+$ phanspeed mission perf
+mission \-> perf
+
+$ phanspeed intensity +
+intensity \-> 4/4
+
+$ phanspeed doctor
+phanspeed doctor \(em read-only firmware/thermal snapshot (changes nothing)
+
+  phanspeed   : running (v0.30.2)
+  BIOS        : 1.40.0
+  thermal mode: balanced  (platform_profile; choices: low-power balanced performance)
+  turbo       : on  (no_turbo=0)
+  fans        : CPU Fan 3200/6500 rpm · GPU Fan 0/6200 rpm
+  cpu temp    : 52°C
+
+WATT CHOKE  (the cap that crippled it before)
+  software cap: none \(em phanspeed is NOT limiting watts ✓ (PL1 65 W)
+  live clamp  : none detected ✓ (no BD PROCHOT under current load)
+  hidden cap  : BIOS-governed (the MMIO lever was removed in v0.20 for security).
+                Lift it via BIOS ThermalManagement; not runtime-readable without /dev/mem.
+
+verdict: ✓ watt choke clear \(em phanspeed isn't capping and no live clamp detected.
+.EE
+.SH FILES
+.TP
+.I /run/phanspeed/status.json
+The read seam \(em profile/mission, power balance, temps, dGPU state,
+E-core confinement. World-readable, updated every poll. Mode 0644 (or
+0640 when a single owner UID is configured).
+.TP
+.I /run/phanspeed/control.sock
+The command socket used by every verb above. Mode 0666, peercred-gated
+(see
+.BR phanspeedd (8)'s
+SECURITY section).
+.SH EXIT STATUS
+Non-zero if
+.B phanspeedd
+is unreachable, or if it rejects the request (bad value, unknown
+profile/mission, rate limited) \(em the message explains why.
+.SH SEE ALSO
+.BR phanspeedd (8),
+.BR phanspeed\-tune (8),
+.BR phanspeed\-update (1),
+.BR phanspeed\-healthcheck (8)
+.SH AUTHOR
+asuramaya and PhanSpeed contributors.

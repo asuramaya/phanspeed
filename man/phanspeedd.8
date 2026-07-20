@@ -1,0 +1,222 @@
+'\" t
+.TH PHANSPEEDD 8 "2026-07-20" "phanspeed 0.30.2" "phanspeed manual"
+.SH NAME
+phanspeedd \- the phanspeed thermal/power daemon
+.SH SYNOPSIS
+.B phanspeedd
+.SH DESCRIPTION
+.B phanspeedd
+is the only privileged actor in phanspeed: it owns the truth about the
+Dell laptop's thermal/power state \(em platform_profile, CPU package
+power cap (RAPL PL1), EPP, turbo, dGPU power limit, and (Endure mission)
+E-core confinement + dGPU runtime suspend \(em and is the only writer of
+any of those knobs.
+.BR phanspeed (1)
+and every other consumer talk to it over the control socket; nothing
+above the socket ever needs privilege to read.
+.PP
+Runs a poll loop (default every
+.I poll_interval
+seconds) that reads temperature/battery/AC state, arbitrates the active
+profile or mission, and applies whichever thermal/power knobs changed.
+An
+.B emergency
+failsafe forces the most aggressive cooling profile the instant a CPU
+sensor crosses
+.IR emergency_temp ,
+latched until it falls below
+.I emergency_clear_temp
+\(em hardcoded logic, not disableable from the socket (see CONFIGURATION).
+.SH CONFIGURATION
+Config is the seed, never the master: every field is re-clamped and
+every invariant re-enforced on load AND after every socket
+.I set
+(sanitize_config()), so neither a tampered config file nor a hostile
+socket client (the socket is 0666) can ever leave the daemon in an
+unsafe or crashing state. Default path:
+.IR /etc/phanspeed/config.json .
+.TS
+tab(@) allbox;
+lb lb lb
+l l l.
+key@default@clamp
+poll_interval@3.0 s@\(em (not socket-clamped)
+quiet_below@60\(deC@30\(en85
+cool_above@80\(deC@40\(en90
+hysteresis@4\(deC@0\(en15
+emergency_temp@90\(deC@60\(en95
+emergency_clear_temp@78\(deC@40\(en90
+rate_limit@10@1\(en1000
+power_limit_w@0 W@0, 8\(en250
+power_floor_w@0 W@0, 8\(en250
+battery_power_w@0 W@0, 8\(en250
+gpu_power_limit_w@0 W@0, 8\(en250
+intensity@2@0\(en4
+.TE
+.PP
+.IR rate_limit " is set-commands per 10s window; the four power fields are"
+0 = unmanaged/base-TDP, otherwise clamped into their range.
+.I emergency_temp
+cannot be raised past 95\(deC, and
+.I emergency_clear_temp
+is always forced at least 2\(deC below whatever
+.I emergency_temp
+resolves to \(em the failsafe stays meaningful no matter what a config
+file or socket client sends.
+.PP
+Non-numeric fields, validated by type/enum rather than a numeric clamp:
+.IR mode " (" auto | manual "), " manual_profile " / " battery_profile
+(one of the hardware's own detected profile choices),
+.IR sensor " (" auto " or a detected sensor id), " allow_uids " (list of"
+ints; root is always allowed regardless),
+.IR power_auto ", " battery_aware ", " gpu_persistence ", " endure_gpu_sleep ,
+.IR endure_trim ", " endure_ecores ", " pin_deny_on_battery_endure " (bool),"
+.IR turbo " (" auto | on | off "), " epp " / " battery_epp " (\(oq\(cq or a valid"
+EPP governor string),
+.IR mission " (\(oq\(cq | " cool | perf | endure "), " endure_pause_units
+(list of systemd unit names, max 16 \(em stopped on battery-Endure entry,
+restarted on release).
+.SH FILES
+.TP
+.I /etc/phanspeed/config.json
+Hot-reloaded on every socket
+.I set
+(never re-read from disk on a timer); written back by the daemon itself
+after a change is applied, so it always reflects the live, sanitized
+state.
+.TP
+.I /run/phanspeed/status.json
+World-readable (0644, or 0640 when
+.I allow_uids
+narrows to a single owner), written every poll. Carries
+.IR written_at " (epoch, lets a watcher tell a dead daemon from steady"
+state),
+.IR ecore_set " / " pcore_set ,
+power balance, dGPU state, and the active
+.I pin
+(if any). Consumed by the GNOME pill and, per contract, by external
+orchestrators \(em see
+.IR docs/ECORE\-POWER.md .
+.TP
+.I /run/phanspeed/control.sock
+0666, gated by
+.B SO_PEERCRED
+against
+.I allow_uids
+(root always allowed) \(em file mode and peercred are two independent
+gates. Built on the vendored
+.B sutra
+.RI ( sutra (7))
+.B ControlServer
+with phanspeed's own 64 KiB line cap (\fIMAX_MSG_BYTES\fP, larger than
+sutra's stock default \(em some \fIset\fP payloads, e.g.
+\fIendure_pause_units\fP, run long) and a custom authorization closure,
+since
+.I allow_uids
+is live-reconfigurable via the socket itself rather than a fixed
+startup set.
+.TP
+.I /run/phanspeed/paused_units.json
+Bookkeeping for Endure's unit-pausing lever: which
+.I endure_pause_units
+this daemon instance itself stopped, so release only restarts units it
+paused.
+.SH PROTOCOL
+Line-delimited JSON, {"cmd": ...} in, one JSON object back.
+.TP
+{"cmd": "get"}
+Returns the same object as
+.IR status.json .
+.TP
+{"cmd": "set", ...}
+Any subset of the CONFIGURATION fields above. Invalid fields are
+dropped and named back in the response's
+.I rejected
+list \(em never silently ignored, never crash the daemon. Setting a raw
+stance knob (
+.IR mode ", " manual_profile )
+while a mission is active drops the mission back to
+.IR off ,
+since a mission owns the whole stance.
+.TP
+{"cmd": "pin", "mission": m, "ttl_s": t, "owner": o}
+A bounded lease that overrides the
+.I applied
+mission for
+.I t
+seconds without touching the persisted config. Every request is
+answered explicitly, granted or denied with a reason
+.RI ( pin_decision() ):
+a second pin while one is held is denied naming the current holder; a
+pin that would fight an active battery-Endure stance is denied unless
+.I pin_deny_on_battery_endure
+is relaxed. See
+.IR docs/ECORE\-POWER.md "'s pin API section for the full contract and"
+transport (relayed by
+.I orchestratord
+for remote/mesh callers \(em phanspeedd itself only ever hears from a
+local, peercred-authorized UID).
+.TP
+{"cmd": "unpin"}
+Releases an active pin early.
+.SH SIGNALS
+.TP
+.B SIGTERM, SIGINT
+Clean shutdown: restore a neutral thermal profile, remove
+.IR status.json ,
+release any confined slices/paused units, close the socket.
+.SH SECURITY
+The relevant attacker is an unprivileged local process abusing the root
+daemon over its world-writable socket; phanspeedd has no network
+attack surface at all
+.RI ( IPAddressDeny=any ,
+see
+.BR systemd.exec (5))
+\(em the only component that ever reaches the internet is the separate,
+unprivileged
+.BR phanspeed\-update (1)
+checker.
+.TP
+.B Socket
+AF_UNIX, newline-delimited JSON, bounded reads (64 KiB line cap). Every
+connection is checked against
+.B SO_PEERCRED
+\(em only root or a UID in
+.I allow_uids
+may issue commands \(em on top of the socket's own 0666 file mode. Two
+independent gates, same doctrine as every other pill in the family.
+.TP
+.B Hostile input
+Malformed JSON, non-objects, oversized lines, and unknown commands are
+answered with
+.RI { \(dqerror\(dq : ...} " and the connection ends; they never crash the"
+daemon (see
+.BR tests/attack_socket.py ,
+the adversarial fuzz suite \(em
+.BR "make attack" ).
+.TP
+.B The emergency floor
+.I emergency_temp
+is hard-capped to
+.RI [ 60 ", " 95 ]
+\(deC and cannot be raised away by a tampered config or a hostile socket
+client \(em the thermal failsafe stays meaningful no matter what a local
+attacker sends.
+.TP
+.B Capabilities
+The systemd unit keeps exactly one capability,
+.IR CAP_CHOWN ,
+to hand the socket/status file to the logged-in user; every other
+capability is dropped. See
+.I systemd/phanspeed.service
+for the full sandboxing profile (parity-checked against the family's
+.BR ramsteind (8)
+reference, UNIFY.md row 12).
+.SH SEE ALSO
+.BR phanspeed (1),
+.BR phanspeed\-tune (8),
+.BR phanspeed\-update (1),
+.BR phanspeed\-healthcheck (8),
+.BR systemd.exec (5)
+.SH AUTHOR
+asuramaya and PhanSpeed contributors.

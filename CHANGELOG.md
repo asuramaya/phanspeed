@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.30.3] — 2026-07-20
+
+### Added
+- **UNIFY.md Wave B checklist** (Alfred's convention blitz, row-by-row
+  matrix): `packages.txt` (stdlib-only; documents the two hard runtime
+  binaries — `systemctl`, `ssh-keygen` — and one optional one —
+  `nvidia-smi`), `man/phanspeed.1` + `man/phanspeedd.8` (groff, following
+  RAMstein's template — verbs, full config clamp table, socket protocol,
+  security posture), now installed by `packaging/build-deb.sh` into
+  `/usr/share/man/man{1,8}`. `make attack` is now the canonical target for
+  the adversarial fuzz suite (family grammar, UNIFY.md row 6); `make test`
+  stays as a back-compat alias. `systemd/phanspeed.service` gained a
+  `Documentation=` line and a parity note against the family's `ramsteind
+  (8)` reference unit (UNIFY.md row 12): phanspeed already carries every
+  hardening directive RAMstein's does, plus ~19 more — verdict recorded
+  inline rather than changing any actual directive.
+
+### Fixed
+- **`phanspeed-update` could crash instead of failing closed** if
+  `ssh-keygen` wasn't on `PATH`: `verify_signature()`'s `subprocess.run`
+  call was unguarded, so a missing `openssh-client` (never previously
+  declared as a dependency anywhere) would raise an uncaught
+  `FileNotFoundError` once a signing key was provisioned — live since
+  v0.30.1 armed `release-signing/allowed_signers`. Now caught explicitly,
+  prints a clear message, and fails closed (refuses to install) exactly
+  like every other verification failure in that function.
+  `packaging/debian/control`'s `Depends` gains `openssh-client`, closing
+  the gap for every `.deb` install going forward; found while writing
+  `packages.txt`'s runtime-dependency audit.
+
 ## [0.30.2] — 2026-07-20
 
 ### Changed

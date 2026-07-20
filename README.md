@@ -279,6 +279,7 @@ emergency override also drops to base TDP automatically.
 | `platform_profile` | must exist: `cat /sys/firmware/acpi/platform_profile_choices` |
 | `dell-smm-hwmon` | for temp/fan readout (loaded by default on Dell) |
 | Python | 3.x stdlib only (no pip deps) |
+| `openssh-client` | `ssh-keygen`, for release-signature verification (see [packages.txt](packages.txt)) |
 
 Confirmed: **Dell Precision 5770**. Other Dells with `platform_profile` should
 work — please file a [hardware report](.github/ISSUE_TEMPLATE/hardware_report.md)
@@ -293,7 +294,7 @@ with your model and `diag.py` output.
 - [Architecture](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) ·
   [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md) ·
   [Changelog](CHANGELOG.md) · [Auto-tuner design](docs/AUTOTUNE.md)
-- Common tasks: `make help` (install, lint, test, pack, check)
-- Adversarial test suite: `make test` (`python3 tests/attack_socket.py`)
+- Common tasks: `make help` (install, lint, attack, pack, check)
+- Adversarial test suite: `make attack` (`python3 tests/attack_socket.py`; `make test` still works)
 - License: [GPL-3.0-or-later](LICENSE)
 

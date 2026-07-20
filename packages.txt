@@ -1,0 +1,26 @@
+# phanspeed — runtime dependencies
+#
+# Pure Python standard library — no pip/PyPI dependencies at all. Everything
+# below is an EXTERNAL BINARY phanspeedd/phanspeed-tune/phanspeed-update shell
+# out to, split hard (in packaging/debian/control's Depends, dpkg pulls it in
+# automatically) vs optional (feature degrades gracefully if absent).
+
+# --- hard (packaging/debian/control Depends) ------------------------------
+python3         # the interpreter itself
+systemd         # phanspeedd.service, the update timer, `systemctl` calls
+                # (endure_pause_units' unit pause/resume, healthcheck restart)
+openssh-client  # `ssh-keygen -Y verify`: phanspeed-update's release-signature
+                # check against release-signing/allowed_signers, and
+                # install.sh's own bootstrap verify. Absent: verify_signature()
+                # fails closed (refuses to install) rather than crashing —
+                # see bin/phanspeed-update.
+
+# --- optional (packaging/debian/control Recommends) -----------------------
+nvidia-smi      # NVIDIA proprietary driver's CLI. Backs GPU power-limit
+                # control, persistence mode, and Endure's dGPU-sleep/wake
+                # status reporting (bin/phanspeedd's _find_nvidia_smi()).
+                # Absent, or no NVIDIA dGPU present: those fields just report
+                # unavailable — never an error.
+gnome-shell     # the Quick Settings pill (extension/phanspeed@asuramaya).
+                # Absent: phanspeedd and the `phanspeed` CLI work exactly the
+                # same headless; only the GNOME UI is unavailable.

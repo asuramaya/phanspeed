@@ -151,7 +151,7 @@ The daemon is root with a world-reachable socket, so **every input is hostile**:
   guarantee is enforced on every PR.
 - `tests/attack_socket.py` — full adversarial suite against the live socket
   (peer-auth, oversized/garbage input, rate limiting). Needs real Dell hardware;
-  run with `make test`.
+  run with `make attack` (`make test` still works, as an alias).
 
 ## Adding a config field (checklist)
 

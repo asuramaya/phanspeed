@@ -2,7 +2,7 @@ Package: phanspeed
 Version: @VERSION@
 Architecture: all
 Maintainer: asuramaya <asuramaya@users.noreply.github.com>
-Depends: python3, systemd
+Depends: python3, systemd, openssh-client
 Recommends: gnome-shell, nvidia-smi
 Section: utils
 Priority: optional

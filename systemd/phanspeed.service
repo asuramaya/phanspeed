@@ -1,5 +1,6 @@
 [Unit]
 Description=PhanSpeed — Dell thermal/fan control daemon
+Documentation=https://github.com/asuramaya/phanspeed
 After=multi-user.target
 
 [Service]
@@ -61,6 +62,14 @@ KeyringMode=private
 UMask=0077
 # NOTE: do NOT set ProtectKernelTunables=yes — it remounts /sys read-only and
 # would break writing /sys/firmware/acpi/platform_profile.
+#
+# Hardening parity pass (2026-07-20, UNIFY.md row 12) against the family's
+# ramsteind(8) reference unit: this unit already carries every directive RN's
+# does except ProtectKernelTunables (the deliberate exemption above) and
+# StateDirectory (n/a — phanspeed has no /var/lib state; its one writable
+# path, /etc/phanspeed, is already covered by ReadWritePaths above) — plus
+# ~19 directives (NoNewPrivileges through UMask) RN's unit doesn't carry at
+# all. Verdict: parity met, nothing to add.
 
 [Install]
 WantedBy=multi-user.target
