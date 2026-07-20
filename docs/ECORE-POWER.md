@@ -161,15 +161,26 @@ the request is itself for Endure or the policy is explicitly relaxed
 team's power choice invisibly clamping another's GPU) becoming a visible,
 negotiated transaction instead.
 
-**Transport still undecided, deliberately.** The mechanism rides the *existing*
-control socket, gated by the *existing* SO_PEERCRED + `allow_uids` check —
-nothing new is exposed. Whether a remote/cross-project caller (a bare-metal
-Soundwave, or a Xen guest relayed by rotten-apple) ever reaches this socket at
-all — and how — is a separate trust-boundary decision, not defaulted here.
-"Guests never talk to phanspeed directly; the orchestrator is the only
-client" is a real option for the Xen case, but Soundwave's original ask was
-bare-metal with no orchestrator in the loop, so that framing doesn't fully
-apply — pick the transport before wiring any cross-team caller.
+**Transport: decided (Ra/rotten-apple, 2026-07-20, ruling ea54d904) — phanspeed
+implements nothing new.** The socket stays exactly as it is: local-only,
+SO_PEERCRED + `allow_uids`, no new surface exposed. A remote caller (Soundwave,
+or a relayed Xen guest) never talks to phanspeed directly; `orchestratord`
+(rotten-apple) is the authenticated front door and the only relay client —
+"guests never talk to phanspeed directly" turned out to be the right framing
+for the bare-metal case too, once mesh identity existed to authenticate a
+bare-metal peer the same way as a guest. `orchestratord` gains `power.pin` /
+`power.unpin` control-plane methods (rotten-apple's obligation, not
+phanspeed's); those methods are privileged-by-construction (fail-closed
+allow-list of unprivileged read-only methods, everything else needs a
+node-signed request), authenticate the caller by Ed25519 node identity +
+nonce-challenge/sequence, and relay to this socket as a trusted local UID.
+Division of authority stays clean: `orchestratord` decides WHO, phanspeed's
+own `pin_decision()` still decides WHETHER — unchanged, including the
+job-scoping semantics above. Works today for mesh peers with a node key
+(Soundwave); Xen guest callers wait only on guest node-key provisioning
+(rotten-apple's own thread), same transport either way. Ra pings this repo
+to lock the exact `cmd:pin` param schema before wiring the relay — the
+`{"cmd": "pin", "mission", "ttl_s", "owner"}` shape above is what's on offer.
 
 ### Why this shape
 

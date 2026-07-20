@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.30.2] — 2026-07-20
+
+### Changed
+- **Pin API cross-project transport: decided** (docs/ECORE-POWER.md), closing
+  the gap left open since v0.29.3. Ra/rotten-apple's spec (ruling ea54d904):
+  phanspeed implements nothing new — the control socket stays local-only,
+  SO_PEERCRED + `allow_uids`, unchanged. `orchestratord` is the authenticated
+  front door for remote/cross-project callers (Soundwave, a relayed Xen
+  guest): it authenticates the caller by Ed25519 node identity, then relays
+  to phanspeed's existing socket as a trusted local UID. `orchestratord`
+  decides WHO; phanspeed's own `pin_decision()` still decides WHETHER. No
+  code change here — the existing `{"cmd": "pin", "mission", "ttl_s",
+  "owner"}` schema is what Ra will wire against once the exact params are
+  locked with this repo.
+
 ## [0.30.1] — 2026-07-19
 
 ### Added
