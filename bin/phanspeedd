@@ -1833,13 +1833,20 @@ class Daemon:
 
     def status(self):
         with self.lock:
+            now = time.time()
             return {
                 "ok": True,
                 "version": self.version,
                 # epoch timestamp of this snapshot — lets a file reader (rotten-apple's
                 # inotify watcher) detect a stale file from a dead phanspeed, which a
                 # world-readable file that just stopped updating can't otherwise signal
-                "written_at": time.time(),
+                "written_at": now,
+                # "ts" + "daemon.poll_interval" are the sutra.check_health() shape
+                # (UNIFY.md health helper) — same value as written_at, kept as a
+                # distinct key since it's the shared family contract, not phanspeed's
+                # own (external consumers like rotten-apple key on written_at).
+                "ts": now,
+                "daemon": {"poll_interval": self.config.get("poll_interval", 3.0)},
                 "emergency": self.emergency,
                 "on_battery": self.hw.on_battery(),
                 "mode": self.config["mode"],

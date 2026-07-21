@@ -29,8 +29,11 @@ for b in phanspeedd phanspeed phanspeed-healthcheck phanspeed-tune phanspeed-upd
 done
 
 # vendored sutra backbone -> sibling of the bins that import it (they add
-# their own directory to sys.path automatically; not executable itself)
+# their own directory to sys.path automatically; none of these are
+# executable themselves). sutra_xen ships unconditionally, unimported for now.
 install -m 0644 "$SRC/bin/sutra.py" "$ROOT/usr/bin/sutra.py"
+install -m 0644 "$SRC/bin/sutra_update.py" "$ROOT/usr/bin/sutra_update.py"
+install -m 0644 "$SRC/bin/sutra_xen.py" "$ROOT/usr/bin/sutra_xen.py"
 
 # man pages
 install -m 0644 "$SRC/man/phanspeed.1" "$ROOT/usr/share/man/man1/phanspeed.1"
@@ -46,6 +49,8 @@ done
 # GNOME extension -> system-wide (users still `gnome-extensions enable`)
 install -m 0644 "$SRC/extension/phanspeed@asuramaya/extension.js" \
         "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya/extension.js"
+install -m 0644 "$SRC/extension/phanspeed@asuramaya/pill.js" \
+        "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya/pill.js"
 install -m 0644 "$SRC/extension/phanspeed@asuramaya/metadata.json" \
         "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya/metadata.json"
 

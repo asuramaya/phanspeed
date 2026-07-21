@@ -3,105 +3,52 @@
 # Copyright (C) 2026 asuramaya and PhanSpeed contributors
 """phanspeed-update — pull newer PhanSpeed releases from GitHub and install them.
 
-Checks the repo's latest GitHub release, compares it to the installed package
-version, and (unless --check) downloads the .deb asset, verifies its SHA256
-against the release's SHA256SUMS, and installs it with dpkg. Intended to run from
-phanspeed-update.timer (daily) as root.
+Thin wrapper over the vendored sutra_update.py (UNIFY.md Wave A #1, the
+family's shared update spine): one grammar, one trust chain, one
+install-path detection, shared fleet-wide instead of six hand-rolled
+copies. This file supplies only what's phanspeed-specific — the repo slug,
+the installed-version lookup (dpkg first, VERSION file fallback for a
+source install), and where the signing anchor lives.
 
-This is deliberately a SEPARATE program from the daemon: phanspeedd is hardened
-with no network access at all (IPAddressDeny=any), so the one component that
-reaches the internet is this small, isolated updater — never the privileged
-control loop.
+  phanspeed-update --check [--json]   notify tier (default): report only
+  phanspeed-update                    manual install tier (explicit consent —
+                                       this is what the pill's polkit prompt
+                                       runs; that click-tier is unchanged,
+                                       it just execs this binary bare)
+  phanspeed-update --auto             timer tier — inert here, since
+                                       phanspeed has no auto_update config
+                                       toggle (v0.25.0's deliberate choice:
+                                       installs stay notify+click, never
+                                       unattended); the daily timer only
+                                       ever passes --check.
 
-Integrity note: downloads are over HTTPS (GitHub as trust anchor) and verified
-against the published SHA256SUMS. That protects against corruption/partial
-downloads, not authenticity — the checksum comes from the same release it
-checks, so a compromised asset carries its own "valid" checksum. Once a
-signing key is provisioned (docs/RELEASE-SIGNING.md), SHA256SUMS.sig is also
-verified against the pinned key and any failure is fail-closed. Until then
-this degrades to SHA256-only with a printed warning — see verify_signature().
+This is deliberately a SEPARATE program from the daemon: phanspeedd is
+hardened with no network access at all (IPAddressDeny=any), so the one
+component that reaches the internet is this small, isolated updater —
+never the privileged control loop.
 """
-import hashlib
-import json
 import os
-import re
 import subprocess
 import sys
-import tempfile
-import urllib.request
 
-REPO = "asuramaya/phanspeed"
-API = f"https://api.github.com/repos/{REPO}/releases/latest"
-PKG = "phanspeed"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sutra_update  # noqa: E402
+
+REPO_SLUG = "asuramaya/phanspeed"
+PILL = "phanspeed"
 VERSION_FILE = "/usr/share/phanspeed/VERSION"
-# Fleet signing doctrine (Ra's ceremony, ratified fleet-wide): principal =
-# stable identity, namespace = role. The operator's shared FIDO2 identity
-# signs for every pill under its own repo-named principal; the namespace is
-# what scopes one signature to one purpose within that repo (replay/context
-# isolation), never the other way around.
-SIGN_PRINCIPAL = "phanspeed"
-SIGN_NAMESPACE = "phanspeed-release"
-# Installed (.deb) location first — matches VERSION_FILE's own convention —
-# falling back to the repo-relative path for a source checkout / dev testing.
 _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ALLOWED_SIGNERS_CANDIDATES = (
+ANCHOR_CANDIDATES = (
     "/usr/share/phanspeed/allowed_signers",
     os.path.join(_SRC_DIR, "release-signing", "allowed_signers"),
 )
-
-
-def allowed_signers_path():
-    return next((p for p in ALLOWED_SIGNERS_CANDIDATES if os.path.exists(p)),
-                ALLOWED_SIGNERS_CANDIDATES[0])
-
-
-def has_signing_key(path=None):
-    """Has a real key been provisioned, or is this still the empty placeholder?
-
-    allowed_signers lines are `principal [options] keytype base64key`; blank
-    lines are the only thing we need to skip (we never write comments into
-    this file — see docs/RELEASE-SIGNING.md for why)."""
-    try:
-        with open(path or allowed_signers_path()) as f:
-            return any(line.strip() for line in f)
-    except OSError:
-        return False
-
-
-def verify_signature(data, sig_bytes, allowed_signers=None,
-                     namespace=SIGN_NAMESPACE, principal=SIGN_PRINCIPAL):
-    """True/False — does `sig_bytes` verify against the pinned key over `data`?
-    Caller must only call this once has_signing_key() is True; with no key
-    provisioned there is nothing to verify against."""
-    fd, sig_path = tempfile.mkstemp(prefix="phanspeed-sig-", suffix=".sig")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(sig_bytes)
-        try:
-            r = subprocess.run(
-                ["ssh-keygen", "-Y", "verify", "-f",
-                 allowed_signers or allowed_signers_path(),
-                 "-I", principal, "-n", namespace, "-s", sig_path],
-                input=data, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        except FileNotFoundError:
-            sys.stderr.write("ssh-keygen not found (package openssh-client) "
-                              "— cannot verify a signed release; fail-closed.\n")
-            return False
-        if r.returncode != 0:
-            sys.stderr.write(r.stderr.decode(errors="replace"))
-        return r.returncode == 0
-    finally:
-        try:
-            os.unlink(sig_path)
-        except OSError:
-            pass
 
 
 def deb_version():
     """The dpkg-registered package version, or None if not a .deb install."""
     try:
         out = subprocess.check_output(
-            ["dpkg-query", "-W", "-f=${Version}", PKG],
+            ["dpkg-query", "-W", "-f=${Version}", PILL],
             stderr=subprocess.DEVNULL)
         return out.decode().strip() or None
     except Exception:
@@ -121,137 +68,11 @@ def installed_version():
         return None
 
 
-def vtuple(v):
-    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3])
-
-
-def fetch(url, binary=False, timeout=20, max_bytes=128 * 1024 * 1024):
-    # Cap the body so a compromised/MITM endpoint can't OOM root. A .deb here is
-    # a few hundred KB; 128 MiB is generous. Read max_bytes+1 and reject if the
-    # response would exceed the cap.
-    req = urllib.request.Request(url, headers={"User-Agent": "phanspeed-update"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (https)
-        data = r.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise ValueError("response too large")
-    return data if binary else data.decode()
-
-
-def main():
-    json_out = "--json" in sys.argv
-    check_only = "--check" in sys.argv or json_out   # --json implies check-only
-    cur = installed_version()
-
-    def emit(available, latest=None, note=None):
-        if json_out:
-            print(json.dumps({"current": cur, "latest": latest,
-                              "available": bool(available)}))
-        elif note:
-            print(note)
-
-    if cur is None:
-        emit(False, note="PhanSpeed not detected; nothing to update.")
-        return 0
-    try:
-        rel = json.loads(fetch(API))
-    except Exception as e:
-        emit(False, note=f"update check failed (offline?): {e}")
-        return 0
-    tag = (rel.get("tag_name") or "").lstrip("v")
-    if not tag:
-        emit(False, note="no release tag found.")
-        return 0
-    if vtuple(tag) <= vtuple(cur):
-        emit(False, latest=tag, note=f"up to date (installed {cur}, latest {tag}).")
-        return 0
-
-    emit(True, latest=tag, note=f"update available: {cur} -> {tag}")
-    if check_only:
-        return 0
-
-    # Auto-install (dpkg) is only safe on a packaged install. A source install
-    # (binaries in /usr/local/bin) would be shadowed by a .deb's /usr/bin copies,
-    # so refuse rather than create a split-brain. The VERSION-file fallback above
-    # means `cur` can be set even without dpkg, so gate on the real dpkg check.
-    if deb_version() is None:
-        print("source install detected (not via .deb) — skipping auto-install to\n"
-              "avoid a /usr/local vs /usr/bin split. Update with:\n"
-              "  sudo bash install.sh   (from the repo)\n"
-              "or switch to the packaged install (.deb) for in-place auto-updates.")
-        return 0
-
-    assets = {a.get("name"): a.get("browser_download_url")
-              for a in rel.get("assets", []) if a.get("name")}
-    deb = next((n for n in assets if n.endswith(".deb")), None)
-    if not deb:
-        print("latest release has no .deb asset; nothing to install.")
-        return 1
-
-    data = fetch(assets[deb], binary=True)
-    # Fail CLOSED: refuse to install unless there is a SHA256SUMS asset with a
-    # matching entry for the exact .deb whose hash matches. No "install anyway".
-    if "SHA256SUMS" not in assets:
-        print("error: no SHA256SUMS in release — refusing to install unverified "
-              ".deb.")
-        return 1
-    try:
-        sums = fetch(assets["SHA256SUMS"])
-    except Exception as e:
-        print(f"error: could not fetch SHA256SUMS ({e}) — aborting.")
-        return 1
-    want = None
-    for line in sums.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[1].lstrip("*") == deb:
-            want = parts[0]
-    if not want:
-        print(f"error: SHA256SUMS has no entry for {deb} — aborting.")
-        return 1
-    if want != hashlib.sha256(data).hexdigest():
-        print(f"CHECKSUM MISMATCH for {deb} — aborting.")
-        return 1
-    print("sha256 verified.")
-
-    if has_signing_key():
-        sig_name = "SHA256SUMS.sig"
-        if sig_name not in assets:
-            print(f"error: signing key is provisioned but {sig_name} is "
-                  f"missing from the release — refusing to install "
-                  f"unsigned.")
-            return 1
-        try:
-            sig_bytes = fetch(assets[sig_name], binary=True)
-        except Exception as e:
-            print(f"error: could not fetch {sig_name} ({e}) — aborting.")
-            return 1
-        if not verify_signature(sums.encode(), sig_bytes):
-            print("SIGNATURE VERIFICATION FAILED — aborting.")
-            return 1
-        print("signature verified.")
-    else:
-        print("warning: no release-signing key provisioned yet "
-              "(release-signing/allowed_signers is empty) — proceeding on "
-              "SHA256 alone. See docs/RELEASE-SIGNING.md.")
-
-    # Unpredictable, O_EXCL, mode-0600 temp file (via mkstemp) — closes the
-    # world-writable-/tmp symlink write-through and the write->dpkg TOCTOU that a
-    # predictable name in gettempdir() would expose.
-    fd, tmp = tempfile.mkstemp(prefix="phanspeed-", suffix=".deb")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        r = subprocess.run(["dpkg", "-i", tmp])
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-    if r.returncode == 0:
-        print(f"updated to {tag}.")
-    else:
-        print(f"dpkg failed (rc={r.returncode}); will retry next run.")
-    return r.returncode
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    cur = installed_version()
+    if cur is None:
+        print("PhanSpeed not detected; nothing to update.")
+        sys.exit(0)
+    sys.exit(sutra_update.main(
+        pill=PILL, slug=REPO_SLUG, installed_version=cur,
+        anchor_candidates=list(ANCHOR_CANDIDATES), auto_enabled=False))

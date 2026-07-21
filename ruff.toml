@@ -1,6 +1,10 @@
 # Ruff config for PhanSpeed.
 line-length = 100
 target-version = "py38"
+# Vendored sutra files are never hand-edited (vendor.sh's own rule — re-vendor,
+# don't patch) and are integrity/freshness-checked separately by `make
+# check-sutra`; this repo's style rules don't apply to code it doesn't own.
+extend-exclude = ["bin/sutra*.py"]
 
 [lint]
 select = ["E", "F", "W", "I", "UP", "B"]

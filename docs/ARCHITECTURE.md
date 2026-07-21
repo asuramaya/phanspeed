@@ -39,10 +39,11 @@ clamp (BD PROCHOT) — see the control loop below.
  platform_profile · intel-rapl PL1 · nvidia-smi
 ```
 
-A `phanspeed-healthcheck.timer` restarts the daemon if it goes inactive or
-`status.json` goes stale.
+A `phanspeed-healthcheck.timer` restarts the daemon if it goes inactive, its
+control socket stops answering `cmd:ping`, or `status.json` goes stale (the
+shared `sutra.check_health()` formula, UNIFY.md health helper).
 
-### Binaries (all pure-stdlib Python except the bash healthcheck)
+### Binaries (all pure-stdlib Python)
 
 | Binary | Role |
 |--------|------|

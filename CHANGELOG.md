@@ -4,6 +4,83 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.31.0] — 2026-07-21
+
+### Changed
+- **UNIFY.md Wave A adoption pass: phanspeed converges onto the shared sutra
+  update spine, health helper, and extension commons** (Alfred's GO, Osiris
+  thread 902/923) — three formerly hand-rolled surfaces now delegate to
+  vendored, fleet-shared code instead of six independently-drifting copies:
+  - **`bin/phanspeed-update`** is now a thin wrapper over `sutra_update.main()`
+    (vendored `bin/sutra_update.py`) — same notify/click/auto tiers, same
+    `-I phanspeed -n phanspeed-release` principal/namespace, same fail-closed
+    trust chain. `auto_enabled` is hardcoded `False` (phanspeed has no
+    `auto_update` config toggle — v0.25.0's deliberate notify+click-only
+    choice, unchanged). Gains one real capability over the old hand-rolled
+    version: a verified-tarball source-mode auto-install path (extracts +
+    runs the tarball's own `install.sh`), previously refused outright.
+    `tests/test_signing.py` now pins phanspeed's own principal/namespace
+    wiring against the vendored module directly; the trust-chain edge cases
+    (tampered/unsigned/unarmed) are sutra's own `tests/unit_update.py`'s job,
+    not re-derived per pill.
+  - **`bin/phanspeed-healthcheck`** converted bash → Python, now a thin
+    wrapper over `sutra.check_health()`. Real behavior change: also pings
+    the control socket (`cmd:ping`, answered generically by
+    `sutra.ControlServer` since v0.30.0 — no daemon change needed), catching
+    a wedged-but-still-writing-status.json daemon the old file-staleness-only
+    check couldn't. Staleness threshold is now the shared family formula
+    (`3×poll_interval + 5s`) instead of a fixed 30s constant.
+  - **`bin/phanspeedd`'s `status()`** gained `ts` (epoch, same value as the
+    existing `written_at`) and `daemon.poll_interval` — the shape
+    `sutra.check_health()` and `pill.js`'s `isStale()` both expect. Additive
+    only; every existing external consumer (rotten-apple's `written_at`
+    watch, the CLI's `version`) is untouched.
+  - **`extension/phanspeed@asuramaya/extension.js`** adopts `pill.js`
+    (vendored) for the palette/chip styles, `isObj`/`num`/`esc`, status-file
+    read, socket command writer, generic row helpers, the version
+    footer+update row (`Pill.UpdateSurface` — phanspeed's own hand-rolled
+    version was literally `pill.js`'s reference implementation), and Quick
+    Settings indicator boilerplate. All domain logic — missions, intensity
+    dial, per-mission hero readout, the Advanced expander, clamp banners,
+    live power readout — is untouched, unmoved, still phanspeed's own.
+    Real behavior change: status refresh is now event-driven
+    (`Pill.StatusWatcher` on the daemon's atomic status.json rename, 60s
+    fallback tick) instead of a flat 2-second poll — lower latency, fewer
+    wasted refreshes. Cosmetic: the offline version-footer text changed from
+    "(version unknown)" to "(daemon offline)". Extension `metadata.json`
+    version 22 → 23.
+  - **A real pre-existing gap found and fixed in the same pass**: neither
+    `install.sh` (source install) nor `packaging/build-deb.sh` (.deb) ever
+    shipped `bin/sutra.py` to `install.sh`'s target, and — now that
+    `phanspeedd`/`phanspeed-update` both `import sutra*` — a source install
+    would have crashed on startup. Both now install `sutra.py`,
+    `sutra_update.py`, `sutra_xen.py` alongside the other binaries, and
+    `pill.js` alongside `extension.js`.
+  - `bin/sutra_xen.py` is vendored (vendor.sh vendors the three bin/ files
+    unconditionally together) but **not imported anywhere** — its
+    guest-side dom0-seam cache (`refresh_host_telemetry`) is explicitly
+    gated on XEN.md, which hasn't landed; nothing to wire yet.
+  - `ruff.toml` gained `extend-exclude = ["bin/sutra*.py"]` — vendored files
+    are integrity/freshness-checked by `make check-sutra`, never hand-edited,
+    and this repo's lint rules aren't theirs to enforce (found because
+    `sutra_update.py`/`sutra_xen.py`'s own style trips two of this repo's
+    stricter `select`ed rules that sutra's own unconfigured ruff doesn't
+    catch — phanspeed is the first adopter of either file in the fleet).
+  - `make check-sutra` now drift-guards all four vendored files (was just
+    `sutra.py`); `make check`'s `py_compile`/`node --check` lines extended
+    to match.
+
+**Verification note**: this whole pass ran and was checked from inside a
+Xen guest (this box's interactive desktop moved off bare metal since
+v0.30.3) — `phanspeedd` cannot start here at all (no
+`/sys/firmware/acpi/platform_profile`), so nothing above was verified
+against a live daemon or a live GNOME Shell session. What actually ran:
+static checks (`make check`, all green), and two real executions against
+live external state — `phanspeed-update --check --json` against the real
+GitHub API, and `phanspeed-healthcheck` against the real (inactive) systemd
+unit. The `attack_socket.py` suite and any live-daemon/live-pill behavior
+remain UNRUN pending bare-metal access (Osiris thread 9c943e0a).
+
 ## [0.30.3] — 2026-07-20
 
 ### Added

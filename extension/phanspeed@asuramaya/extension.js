@@ -8,16 +8,24 @@
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import Pango from 'gi://Pango';
 import St from 'gi://St';
 
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
+import {QuickMenuToggle} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+import * as Pill from './pill.js';
+
+const {isObj, num, esc, row, wrapRow} = Pill;
+const {PALETTE, CHIP, CHIP_ON, DOT, DOT_ON} = Pill;
+const {ACCENT, DIM, GOOD, WARN} = PALETTE;
 
 const STATUS_PATH = '/run/phanspeed/status.json';
 const SOCK_PATH = '/run/phanspeed/control.sock';
+
+// re-check cadence for the pill's own "update available" row — independent of
+// phanspeed-update.timer (which only notifies/logs, never paints the UI).
+const UPDATE_CHECK_SECONDS = 6 * 3600;
 
 const PROFILE_ICON = {
     quiet: 'power-profile-power-saver-symbolic',
@@ -55,26 +63,6 @@ const MISSION_ICON = {
 };
 const INTENSITY_MAX = 4;
 
-// concept palette
-const ACCENT = '#b9acff';
-const DIM = '#9aa0a6';
-const GOOD = '#4caf50';
-const WARN = '#ffbb33';
-const CHIP = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#dedde6;'
-    + ' background-color:rgba(255,255,255,0.07);';
-const CHIP_ON = 'border-radius:13px; padding:6px 2px; margin:0 2px; color:#ffffff;'
-    + ' font-weight:bold; background-color:#5b50a8;';
-const DOT = 'border-radius:9px; padding:2px 0; margin:0 3px; color:#9aa0a6;'
-    + ' background-color:rgba(255,255,255,0.05);';
-const DOT_ON = 'border-radius:9px; padding:2px 0; margin:0 3px; color:#ffffff;'
-    + ' font-weight:bold; background-color:#5b50a8;';
-
-function isObj(v) {
-    return v && typeof v === 'object' && !Array.isArray(v);
-}
-function num(v) {
-    return (typeof v === 'number' && isFinite(v)) ? v : null;
-}
 function tColor(t) {
     if (t == null)
         return DIM;
@@ -83,9 +71,6 @@ function tColor(t) {
     if (t < 80)
         return '#ffbb33';
     return '#ff5b5b';
-}
-function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 function fmtMin(rem) {
     if (rem == null)
@@ -113,53 +98,15 @@ function balanceMarkup(bal) {
 }
 
 function readStatus() {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(STATUS_PATH);
-        if (!ok)
-            return null;
-        const o = JSON.parse(new TextDecoder().decode(bytes));
-        return isObj(o) ? o : null;
-    } catch (_e) {
-        return null;
-    }
-}
-
-// Cancellable for in-flight socket ops; reset on enable, cancelled on disable.
-let _cancellable = null;
-
-function sendCmd(obj) {
-    const client = new Gio.SocketClient();
-    client.timeout = 2;
-    const addr = new Gio.UnixSocketAddress({path: SOCK_PATH});
-    const payload = new TextEncoder().encode(JSON.stringify(obj) + '\n');
-    const cancel = _cancellable;
-    client.connect_async(addr, cancel, (src, res) => {
-        let conn;
-        try {
-            conn = src.connect_finish(res);
-        } catch (e) {
-            if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                logError(e, 'PhanSpeed connect');
-            return;
-        }
-        conn.get_output_stream().write_all_async(
-            payload, GLib.PRIORITY_DEFAULT, cancel, (out, ores) => {
-                try {
-                    out.write_all_finish(ores);
-                } catch (e) {
-                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                        logError(e, 'PhanSpeed write');
-                }
-                conn.close_async(GLib.PRIORITY_DEFAULT, null, null);
-            });
-    });
+    return Pill.readStatusFile(STATUS_PATH);
 }
 
 const PhanToggle = GObject.registerClass(
 class PhanToggle extends QuickMenuToggle {
-    _init() {
+    _init(cancellable) {
         super._init({title: 'PhanSpeed', iconName: DEFAULT_ICON, toggleMode: true});
         this.menu.setHeader(DEFAULT_ICON, 'PhanSpeed', 'Thermal control');
+        this._cancellable = cancellable;
 
         // ---- the face: mission chips + intensity + one hero readout ---- //
         this._missionItems = {};
@@ -174,30 +121,25 @@ class PhanToggle extends QuickMenuToggle {
         // power-clamp / alert banner (hidden until something's wrong)
         this._alertSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._alertSection);
-        this._clampItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._clampItem = row('');
         this._clampItem.visible = false;
         this._alertSection.addMenuItem(this._clampItem);
-        this._gpuClampItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._gpuClampItem = row('');
         this._gpuClampItem.visible = false;
         this._alertSection.addMenuItem(this._gpuClampItem);
 
         // always-visible power readout — CPU/GPU actual watts + clocks, so a
         // repeat of the platform_profile GPU-clamp incident (v0.26.2) is
-        // obvious at a glance instead of needing a shell to diagnose.
-        this._powerReadoutItem = new PopupMenu.PopupMenuItem('', {reactive: false});
-        // CPU watts + GPU watts/clocks + wall input can outgrow the pill's
-        // width, and an ellipsis here silently eats a whole figure. Wrap
-        // instead; the parts glue their own words with NBSPs, so a wrap can
-        // only ever land on a separator.
-        this._powerReadoutItem.label.clutter_text.set_line_wrap(true);
-        this._powerReadoutItem.label.clutter_text.set_ellipsize(
-            Pango.EllipsizeMode.NONE);
+        // obvious at a glance instead of needing a shell to diagnose. Wraps
+        // instead of ellipsizing: the parts glue their own words with NBSPs,
+        // so a wrap can only ever land on a separator.
+        this._powerReadoutItem = wrapRow('');
         this.menu.addMenuItem(this._powerReadoutItem);
 
         // hero readout (re-skins per mission) + live temps/fans
-        this._sceneItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
+        this._sceneItem = row('—');
         this.menu.addMenuItem(this._sceneItem);
-        this._tempItem = new PopupMenu.PopupMenuItem('—', {reactive: false});
+        this._tempItem = row('—');
         this.menu.addMenuItem(this._tempItem);
 
         // ---- Advanced (collapsed): raw profile + power/gpu/turbo/epp/battery ---- //
@@ -221,18 +163,18 @@ class PhanToggle extends QuickMenuToggle {
         // requires explicitly leaving the mission first.
         this._missionStatusSection = new PopupMenu.PopupMenuSection();
         this._advancedBody.addMenuItem(this._missionStatusSection);
-        this._powerStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._powerStatusItem = row('');
         this._missionStatusSection.addMenuItem(this._powerStatusItem);
-        this._turboStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._turboStatusItem = row('');
         this._missionStatusSection.addMenuItem(this._turboStatusItem);
-        this._eppStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._eppStatusItem = row('');
         this._missionStatusSection.addMenuItem(this._eppStatusItem);
-        this._energyStatusItem = new PopupMenu.PopupMenuItem('', {reactive: false});
+        this._energyStatusItem = row('');
         this._missionStatusSection.addMenuItem(this._energyStatusItem);
         this._exitMissionItem = new PopupMenu.PopupMenuItem(
             '↩ Leave mission (manual control)');
         this._exitMissionItem.connect('activate', () => {
-            sendCmd({cmd: 'set', mission: ''});
+            this._send({cmd: 'set', mission: ''});
             this._scheduleRefresh();
         });
         this._missionStatusSection.addMenuItem(this._exitMissionItem);
@@ -256,7 +198,7 @@ class PhanToggle extends QuickMenuToggle {
         this._batteryItem = new PopupMenu.PopupSwitchMenuItem('Quiet on battery', false);
         this._batteryItem.connect('toggled', (_i, state) => {
             if (this._syncing) return;   // ignore programmatic setToggleState echoes
-            sendCmd({cmd: 'set', battery_aware: state});
+            this._send({cmd: 'set', battery_aware: state});
             this._scheduleRefresh();
         });
         this._advancedBody.addMenuItem(this._batteryItem);
@@ -264,23 +206,30 @@ class PhanToggle extends QuickMenuToggle {
         this._updateAdvancedLabel();
 
         // update notice (hidden until a newer release is found) + version footer
+        // — the update spine's face, shared with every pill (UNIFY.md Wave A #1/2).
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._updateItem = new PopupMenu.PopupMenuItem('');
-        this._updateItem.visible = false;
-        this._updateItem.connect('activate', () => this._runUpdate());
-        this.menu.addMenuItem(this._updateItem);
-        this._versionItem = new PopupMenu.PopupMenuItem('', {reactive: false});
-        this.menu.addMenuItem(this._versionItem);
-        this._updateLatest = null;     // latest version string when an update is available
+        this._updateSurface = new Pill.UpdateSurface('phanspeed', {
+            cancellable: this._cancellable, onChanged: () => this._scheduleRefresh(),
+        });
+        this.menu.addMenuItem(this._updateSurface.updateItem);
+        this.menu.addMenuItem(this._updateSurface.versionItem);
 
         // clicking the pill body cycles the mission: Perf → Endure → Perf → …
         this.connect('clicked', () => {
             const i = PILL_MISSIONS.indexOf(this._activeMission);   // '' or 'cool' → -1 → Perf
-            sendCmd({cmd: 'set', mission: PILL_MISSIONS[(i + 1) % PILL_MISSIONS.length]});
+            this._send({cmd: 'set', mission: PILL_MISSIONS[(i + 1) % PILL_MISSIONS.length]});
             this._scheduleRefresh();
         });
         this._syncing = false;   // true while refresh() pushes state into widgets,
                                  // so their 'toggled' echoes don't loop back to the daemon
+    }
+
+    _send(obj) {
+        Pill.sendCmd(SOCK_PATH, obj, this._cancellable, 'PhanSpeed');
+    }
+
+    checkForUpdate() {
+        this._updateSurface.checkNow();
     }
 
     _updateAdvancedLabel() {
@@ -289,8 +238,8 @@ class PhanToggle extends QuickMenuToggle {
     }
 
     _buildMissions() {
-        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const box = new St.BoxLayout({x_expand: true});
+        const box = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const layout = new St.BoxLayout({x_expand: true});
         for (const m of PILL_MISSIONS) {
             const btn = new St.Button({
                 label: MISSION_LABEL[m], x_expand: true, can_focus: true, style: CHIP,
@@ -298,37 +247,37 @@ class PhanToggle extends QuickMenuToggle {
             btn.connect('clicked', () => {
                 // toggle: clicking the active mission drops back to legacy control
                 const off = this._activeMission === m;
-                sendCmd({cmd: 'set', mission: off ? '' : m});
+                this._send({cmd: 'set', mission: off ? '' : m});
                 this._scheduleRefresh();
             });
-            box.add_child(btn);
+            layout.add_child(btn);
             this._missionItems[m] = btn;
         }
-        row.add_child(box);
-        this._missionSection.addMenuItem(row);
+        box.add_child(layout);
+        this._missionSection.addMenuItem(box);
     }
 
     _buildIntensity() {
-        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const box = new St.BoxLayout({x_expand: true});
+        const box = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const layout = new St.BoxLayout({x_expand: true});
         const lab = new St.Label({text: 'intensity', style: `color:${DIM}; padding-right:8px;`});
         lab.y_align = 2;     // Clutter.ActorAlign.CENTER
-        box.add_child(lab);
+        layout.add_child(lab);
         this._intensityItems = [];
         for (let i = 0; i <= INTENSITY_MAX; i++) {
             const btn = new St.Button({
                 label: String(i), x_expand: true, can_focus: true, style: DOT,
             });
             btn.connect('clicked', () => {
-                sendCmd({cmd: 'set', intensity: i});
+                this._send({cmd: 'set', intensity: i});
                 this._scheduleRefresh();
             });
-            box.add_child(btn);
+            layout.add_child(btn);
             this._intensityItems.push(btn);
         }
-        row.add_child(box);
-        this._intensitySection.addMenuItem(row);
-        this._intensityRow = row;
+        box.add_child(layout);
+        this._intensitySection.addMenuItem(box);
+        this._intensityRow = box;
     }
 
     _buildPower(power) {
@@ -344,7 +293,7 @@ class PhanToggle extends QuickMenuToggle {
         this._powerAutoItem = new PopupMenu.PopupSwitchMenuItem('Scale with temperature', false);
         this._powerAutoItem.connect('toggled', (_i, state) => {
             if (this._syncing) return;   // ignore programmatic setToggleState echoes
-            sendCmd({cmd: 'set', power_auto: state});
+            this._send({cmd: 'set', power_auto: state});
             this._scheduleRefresh();
         });
         this._powerSub.menu.addMenuItem(this._powerAutoItem);
@@ -352,7 +301,7 @@ class PhanToggle extends QuickMenuToggle {
         const add = (label, w) => {
             const it = new PopupMenu.PopupMenuItem(label);
             it.connect('activate', () => {
-                sendCmd({cmd: 'set', power_auto: false, power_limit_w: w});
+                this._send({cmd: 'set', power_auto: false, power_limit_w: w});
                 this._scheduleRefresh();
             });
             this._powerSub.menu.addMenuItem(it);
@@ -373,7 +322,7 @@ class PhanToggle extends QuickMenuToggle {
             this._turboItem = new PopupMenu.PopupSwitchMenuItem('Turbo boost', false);
             this._turboItem.connect('toggled', (_i, state) => {
                 if (this._syncing) return;   // ignore programmatic setToggleState echoes
-                sendCmd({cmd: 'set', turbo: state ? 'on' : 'off'});
+                this._send({cmd: 'set', turbo: state ? 'on' : 'off'});
                 this._scheduleRefresh();
             });
             this._cpuPrefSection.addMenuItem(this._turboItem);
@@ -384,7 +333,7 @@ class PhanToggle extends QuickMenuToggle {
             const add = (label, val) => {
                 const it = new PopupMenu.PopupMenuItem(label);
                 it.connect('activate', () => {
-                    sendCmd({cmd: 'set', epp: val});
+                    this._send({cmd: 'set', epp: val});
                     this._scheduleRefresh();
                 });
                 this._eppSub.menu.addMenuItem(it);
@@ -405,72 +354,6 @@ class PhanToggle extends QuickMenuToggle {
         });
     }
 
-    // Ask the (networked, isolated) updater whether a newer release exists. The
-    // daemon itself has no network — this runs in the user session.
-    _checkUpdate() {
-        let proc;
-        try {
-            proc = Gio.Subprocess.new(
-                ['phanspeed', 'update', '--check', '--json'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
-        } catch (_e) {
-            return;
-        }
-        proc.communicate_utf8_async(null, _cancellable, (p, res) => {
-            let out;
-            try {
-                [, out] = p.communicate_utf8_finish(res);
-            } catch (_e) {
-                return;
-            }
-            let latest = null;
-            try {
-                const o = JSON.parse(String(out || '').trim().split('\n').pop());
-                if (o && o.available && typeof o.latest === 'string')
-                    latest = o.latest;
-            } catch (_e) {
-                latest = null;
-            }
-            this._updateLatest = latest;
-            this.refresh();
-        });
-    }
-
-    // Install the update with a polkit prompt. sh picks the packaged binary if
-    // present, else the source copy, so it works for both install layouts.
-    _runUpdate() {
-        const cmd = 'p=/usr/bin/phanspeed-update; [ -x "$p" ] || '
-            + 'p=/usr/local/bin/phanspeed-update; exec "$p"';
-        try {
-            const proc = Gio.Subprocess.new(
-                ['pkexec', '/bin/sh', '-c', cmd],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
-            proc.wait_async(_cancellable, () => {
-                this._checkUpdate();           // re-check; clears the notice when done
-                this._scheduleRefresh();
-            });
-        } catch (e) {
-            logError(e, 'PhanSpeed update');
-        }
-        try {
-            Main.notify('PhanSpeed', `Installing v${this._updateLatest || ''}…`);
-        } catch (_e) {
-            // notifications are best-effort
-        }
-    }
-
-    _refreshUpdate(ver) {
-        this._versionItem.label.clutter_text.set_markup(
-            `<span foreground="${DIM}">phanspeed ${ver ? `v${esc(ver)}` : '(version unknown)'}</span>`);
-        const latest = this._updateLatest;
-        const show = !!latest && (!ver || latest !== ver);
-        this._updateItem.visible = show;
-        if (show) {
-            this._updateItem.label.clutter_text.set_markup(
-                `<span foreground="${ACCENT}" font_weight="bold">⬆ Update to v${esc(latest)}</span>`);
-        }
-    }
-
     refresh() {
         const st = readStatus();
         if (!st || !st.ok) {
@@ -479,7 +362,7 @@ class PhanToggle extends QuickMenuToggle {
             this.iconName = DEFAULT_ICON;
             this._clampItem.visible = false;
             this._tempItem.label.text = 'phanspeedd not running';
-            this._refreshUpdate(null);   // updater is independent of the daemon
+            this._updateSurface.setVersion(null);   // updater is independent of the daemon
             return;
         }
         this._syncing = true;
@@ -717,7 +600,7 @@ class PhanToggle extends QuickMenuToggle {
         const gpuW = num(gpuInfo.power_w), gpuMhz = num(gpuInfo.clock_mhz);
         const gpuMax = num(gpuInfo.max_clock_mhz);
         const inW = num(bal.in_w);
-        const NB = '\u00a0';   // NBSP: keeps each figure whole when the row wraps
+        const NB = ' ';   // NBSP: keeps each figure whole when the row wraps
         const pParts = [];
         if (cpuW != null)
             pParts.push(`CPU${NB}<span foreground="${ACCENT}">${cpuW}W</span>`);
@@ -747,54 +630,42 @@ class PhanToggle extends QuickMenuToggle {
 
         this.menu.setHeader(this.iconName, 'PhanSpeed', sub);
 
-        // version footer + update notice (kast-style)
-        this._refreshUpdate(typeof st.version === 'string' ? st.version : null);
-    }
-});
-
-const PhanIndicator = GObject.registerClass(
-class PhanIndicator extends SystemIndicator {
-    _init() {
-        super._init();
-        this.toggle = new PhanToggle();
-        this.quickSettingsItems.push(this.toggle);
+        // version footer + update notice — the update spine's face
+        this._updateSurface.setVersion(typeof st.version === 'string' ? st.version : null);
     }
 });
 
 export default class PhanSpeedExtension extends Extension {
     enable() {
-        _cancellable = new Gio.Cancellable();
-        this._indicator = new PhanIndicator();
-        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
-        this._indicator.toggle.refresh();
-        this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-            this._indicator.toggle.refresh();
-            return GLib.SOURCE_CONTINUE;
-        });
-        // check for a newer release now, then every 6h (the daemon has no network)
-        this._indicator.toggle._checkUpdate();
+        this._cancellable = new Gio.Cancellable();
+        this._toggle = new PhanToggle(this._cancellable);
+        this._indicator = Pill.addQuickSettingsToggle(this._toggle);
+        this._toggle.refresh();
+        this._toggle.checkForUpdate();
+
+        // event-driven: the daemon's atomic status.json rename lands here as
+        // soon as it happens, plus a slow fallback tick for daemon-death/
+        // monitor-miss detection (Pill.StatusWatcher, UNIFY.md Wave A #2).
+        this._watcher = new Pill.StatusWatcher(
+            STATUS_PATH, () => this._toggle.refresh(), {fallbackSeconds: 60});
         this._updateTimeout = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, 6 * 3600, () => {
-                this._indicator.toggle._checkUpdate();
+            GLib.PRIORITY_DEFAULT, UPDATE_CHECK_SECONDS, () => {
+                this._toggle.checkForUpdate();
                 return GLib.SOURCE_CONTINUE;
             });
     }
 
     disable() {
-        if (this._timeout) {
-            GLib.source_remove(this._timeout);
-            this._timeout = null;
-        }
+        this._cancellable?.cancel();
+        this._cancellable = null;
         if (this._updateTimeout) {
             GLib.source_remove(this._updateTimeout);
             this._updateTimeout = null;
         }
-        if (_cancellable) {
-            _cancellable.cancel();
-            _cancellable = null;
-        }
-        this._indicator?.quickSettingsItems.forEach(i => i.destroy());
-        this._indicator?.destroy();
+        this._watcher?.destroy();
+        this._watcher = null;
+        Pill.removeIndicator(this._indicator);
         this._indicator = null;
+        this._toggle = null;
     }
 }

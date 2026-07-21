@@ -1,32 +1,48 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 asuramaya and PhanSpeed contributors
-# Restart phanspeedd if it is inactive or its status snapshot has gone stale
-# (i.e. the control loop wedged). Run periodically by phanspeed-healthcheck.timer.
-set -euo pipefail
+"""phanspeed-healthcheck — restart phanspeedd if it's inactive or wedged
+(status stale, or the control socket stopped answering). Run periodically
+by phanspeed-healthcheck.timer.
 
-STATUS=/run/phanspeed/status.json
-MAX_AGE=30   # seconds — well above the 3s poll interval
+Thin wrapper over sutra.check_health() (UNIFY.md health helper, sutra
+0.4.0): the freshness/ping verdict is the shared family formula, not a
+phanspeed-specific magic number. Passive by itself — restarting on a bad
+verdict is this bin's own call, same as before.
+"""
+import os
+import subprocess
+import sys
 
-restart() {
-  echo "[healthcheck] $1 — restarting phanspeed"
-  systemctl restart phanspeed
-}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sutra  # noqa: E402
 
-if ! systemctl is-active --quiet phanspeed; then
-  restart "service not active"
-  exit 0
-fi
+STATUS_PATH = "/run/phanspeed/status.json"
+SOCK_PATH = "/run/phanspeed/control.sock"
+DEFAULT_POLL = 3.0  # phanspeed's own DEFAULTS["poll_interval"] — fallback only;
+                    # status.json always carries the real value once written
 
-if [[ ! -f "$STATUS" ]]; then
-  restart "status file missing"
-  exit 0
-fi
 
-age=$(( $(date +%s) - $(stat -c %Y "$STATUS") ))
-if (( age > MAX_AGE )); then
-  restart "status stale (${age}s old)"
-  exit 0
-fi
+def restart(reason):
+    print(f"[healthcheck] {reason} — restarting phanspeed")
+    subprocess.run(["systemctl", "restart", "phanspeed"])
 
-echo "[healthcheck] ok (status ${age}s old)"
+
+def main():
+    r = subprocess.run(["systemctl", "is-active", "--quiet", "phanspeed"])
+    if r.returncode != 0:
+        restart("service not active")
+        return 0
+
+    healthy, reason, info = sutra.check_health(
+        STATUS_PATH, SOCK_PATH, default_poll=DEFAULT_POLL)
+    if not healthy:
+        restart(reason)
+        return 0
+
+    print(f"[healthcheck] ok (status {info['age']:.0f}s old)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

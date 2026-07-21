@@ -212,7 +212,8 @@ systemctl status phanspeed-healthcheck.timer   # auto-restart watchdog
 ```
 
 A `phanspeed-healthcheck.timer` runs every ~2 min and restarts the daemon if it
-ever goes inactive or its status snapshot goes stale.
+ever goes inactive, its control socket stops answering, or its status
+snapshot goes stale.
 
 ## Tuning
 

@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Unit test for phanspeed-update's release-signing verification
-(docs/RELEASE-SIGNING.md). Generates a throwaway (non-hardware) ed25519 key to
-prove the ssh-keygen -Y sign/verify roundtrip itself is wired correctly —
-verification doesn't care what backed the real signing key, only that a valid
-signature exists, so this is a faithful test of the mechanism the real FIDO2
-key will use. Skips (not fails) if ssh-keygen is unavailable. Exit 0 = pass.
+"""Unit test for phanspeed's release-signing wiring (docs/RELEASE-SIGNING.md).
+
+phanspeed-update is now a thin wrapper over the vendored sutra_update.py
+(UNIFY.md Wave A #1) — the trust-chain edge cases (tampered artifact,
+unsigned-fails-closed, unarmed-degrades-hash-only) are exhaustively covered
+once, in sutra's own tests/unit_update.py, not re-derived per pill. What
+THIS test pins is phanspeed-specific: the shipped anchor's shape, and that
+pill="phanspeed" actually produces the right principal/namespace
+("phanspeed"/"phanspeed-release") when it reaches ssh-keygen — a real
+throwaway (non-hardware) ed25519 key proves the roundtrip. Skips (not
+fails) if ssh-keygen is unavailable. Exit 0 = pass.
 """
-import importlib.machinery as machinery
-import importlib.util as util
 import os
 import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-loader = machinery.SourceFileLoader("phanspeed_update",
-                                    os.path.join(HERE, "bin", "phanspeed-update"))
-spec = util.spec_from_loader("phanspeed_update", loader)
-m = util.module_from_spec(spec)
-loader.exec_module(m)
+sys.path.insert(0, os.path.join(HERE, "bin"))
+import sutra_update as su  # noqa: E402
+
+PILL = "phanspeed"
+NS = f"{PILL}-release"
 
 if subprocess.run(["ssh-keygen", "-Y", "sign"], capture_output=True).returncode == 127:
     print("ssh-keygen not found — skipping signing tests")
     sys.exit(0)
-
-NS = m.SIGN_NAMESPACE
-PRINCIPAL = m.SIGN_PRINCIPAL
 
 # --- the shipped anchor is either the empty placeholder OR a well-formed,
 # armed 4-key set — never partial, never malformed. Mirrors the shape check
@@ -44,64 +44,46 @@ if anchor_content.strip():
 else:
     print("shipped allowed_signers is the empty placeholder OK")
 
-# --- has_signing_key() ------------------------------------------------------
+assert su.armed(os.path.join(HERE, "release-signing", "allowed_signers")) == \
+    bool(anchor_content.strip()), "sutra_update.armed() disagrees with the shape check above"
+print("sutra_update.armed() agrees with the shipped anchor's state OK")
+
+# --- roundtrip: pill="phanspeed" must produce principal="phanspeed",
+# namespace="phanspeed-release" all the way through verify_dir(). This is
+# the one thing genuinely phanspeed's own to pin -- the trust chain itself
+# (tampered/unsigned/unarmed) is sutra's tests/unit_update.py's job.
 with tempfile.TemporaryDirectory() as td:
-    empty = os.path.join(td, "empty")
-    open(empty, "w").close()
-    assert m.has_signing_key(empty) is False
+    key = os.path.join(td, "k")
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C",
+                    "test", "-f", key], check=True)
+    with open(key + ".pub") as f:
+        kt, blob, _ = f.read().split(None, 2)
+    anchor = os.path.join(td, "allowed_signers")
+    with open(anchor, "w") as a:
+        a.write(f'{PILL} namespaces="{NS},pills-tag" {kt} {blob} test\n')
 
-    blank_lines = os.path.join(td, "blank")
-    with open(blank_lines, "w") as f:
-        f.write("\n\n   \n")
-    assert m.has_signing_key(blank_lines) is False, "whitespace-only must not count"
+    work = os.path.join(td, "work")
+    os.makedirs(work)
+    art = os.path.join(work, f"{PILL}.tar.gz")
+    with open(art, "wb") as f:
+        f.write(b"artifact bytes")
+    digest = subprocess.run(["sha256sum", art], capture_output=True,
+                            text=True, check=True).stdout.split()[0]
+    man = os.path.join(work, "SHA256SUMS")
+    with open(man, "w") as f:
+        f.write(f"{digest}  {PILL}.tar.gz\n")
+    subprocess.run(["ssh-keygen", "-Y", "sign", "-n", NS, "-f", key, man],
+                   check=True, capture_output=True)
 
-    missing = os.path.join(td, "does-not-exist")
-    assert m.has_signing_key(missing) is False
+    ok, why = su.verify_dir(work, "SHA256SUMS", "SHA256SUMS.sig", anchor, PILL, True)
+    assert ok and "signature" in why, f"expected pass, got ({ok}, {why!r})"
+    print("verify_dir(): phanspeed principal/namespace roundtrip accepted OK")
 
-with tempfile.TemporaryDirectory() as td:
-    keyfile = os.path.join(td, "id_test")
-    subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "test",
-                   "-f", keyfile], check=True, capture_output=True)
-    with open(keyfile + ".pub") as f:
-        pub = f.read().strip()
-    signers = os.path.join(td, "allowed_signers")
-    with open(signers, "w") as f:
-        f.write(f"{PRINCIPAL} {pub}\n")
-    assert m.has_signing_key(signers) is True
-    print("has_signing_key() OK")
-
-    # --- verify_signature(): real roundtrip -------------------------------
-    data = b"the exact bytes a SHA256SUMS manifest would contain\n"
-    sig = subprocess.run(
-        ["ssh-keygen", "-Y", "sign", "-f", keyfile + ".pub", "-n", NS],
-        input=data, capture_output=True, check=True).stdout
-    assert m.verify_signature(data, sig, signers, NS) is True
-    print("verify_signature(): valid signature accepted OK")
-
-    # tampered data must fail
-    assert m.verify_signature(data + b"tampered", sig, signers, NS) is False
-    print("verify_signature(): tampered data rejected OK")
-
-    # signature from a DIFFERENT (untrusted) key must fail against this
-    # allowed_signers
-    otherkey = os.path.join(td, "id_other")
-    subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "other",
-                   "-f", otherkey], check=True, capture_output=True)
-    other_sig = subprocess.run(
-        ["ssh-keygen", "-Y", "sign", "-f", otherkey + ".pub", "-n", NS],
-        input=data, capture_output=True, check=True).stdout
-    assert m.verify_signature(data, other_sig, signers, NS) is False
-    print("verify_signature(): untrusted key rejected OK")
-
-    # wrong namespace must fail (binds the signature to its intended use)
-    assert m.verify_signature(data, sig, signers, "some-other-namespace") is False
-    print("verify_signature(): namespace mismatch rejected OK")
-
-    # wrong principal must fail too (principal and namespace are independent
-    # axes now — the fix for the conflation the fleet's signing ceremony
-    # caught: principal=stable identity, namespace=role)
-    assert m.verify_signature(data, sig, signers, NS,
-                              principal="some-other-principal") is False
-    print("verify_signature(): principal mismatch rejected OK")
+    # wrong namespace must fail -- catches a typo'd pill= wiring mistake,
+    # not a re-test of ssh-keygen's own enforcement
+    ok, why = su.verify_dir(work, "SHA256SUMS", "SHA256SUMS.sig", anchor,
+                            "not-phanspeed", True)
+    assert not ok, f"expected principal mismatch to fail, got ({ok}, {why!r})"
+    print("verify_dir(): wrong principal rejected OK")
 
 print("release-signing verification OK")
