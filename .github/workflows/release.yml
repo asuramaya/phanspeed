@@ -36,6 +36,16 @@ jobs:
           echo "--- manifest (one signature covers every artifact it lists) ---"
           cat dist/SHA256SUMS
 
+      - name: Extract release notes from CHANGELOG
+        run: |
+          # Format-agnostic: grabs the section starting at the first `## `
+          # heading whose text contains the tag's version, up to (not
+          # including) the next `## ` heading.
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" 'BEGIN{f=0} /^## / { if(f) exit; if(index($0,v)){f=1;print;next} } f{print}' CHANGELOG.md > RELEASE_NOTES.md
+          echo "--- extracted release notes ($(wc -l < RELEASE_NOTES.md) lines) ---"
+          cat RELEASE_NOTES.md
+
       # No signing step here, deliberately: phanspeed-update and install.sh
       # trust an SSH signature (ssh-keygen -Y verify) against a key pinned
       # INSIDE the client (release-signing/allowed_signers,
@@ -57,7 +67,15 @@ jobs:
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
           else
+            # Prefer the extracted CHANGELOG section; fall back to GitHub's
+            # auto-generated notes if extraction came up empty/too-thin
+            # (e.g. a version bump with no matching heading).
+            if [ "$(wc -l < RELEASE_NOTES.md)" -ge 2 ]; then
+              notes_flag=(--notes-file RELEASE_NOTES.md)
+            else
+              notes_flag=(--generate-notes)
+            fi
             gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
               --title "phanspeed ${GITHUB_REF_NAME}" \
-              --generate-notes
+              "${notes_flag[@]}"
           fi
