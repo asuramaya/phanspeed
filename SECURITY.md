@@ -48,9 +48,11 @@ does, so it gets its own threat model. As of **v0.25.0**:
   the pill's `pkexec` prompt or an explicit `sudo phanspeed update` run.
 - Install **fails closed** on integrity: no `SHA256SUMS` asset, no matching entry
   for the exact `.deb`, or a hash mismatch all abort rather than installing
-  anyway. (This is still corruption/tamper-of-transit protection over HTTPS +
-  checksum, not a cryptographic signature — GPG/minisign signing is a planned
-  hardening step.)
+  anyway. As of **v0.30.1**, releases also carry a detached SSH signature
+  (`SHA256SUMS.sig`) from a FIDO2 hardware key pinned outside GitHub's control;
+  once a client has that anchor armed, an unsigned or badly signed release is
+  refused outright, not just an unverified checksum. See
+  [docs/RELEASE-SIGNING.md](docs/RELEASE-SIGNING.md) for the full trust chain.
 - The download is written to an unpredictable `mkstemp()` file (`O_EXCL`, mode
   `0600`) instead of a predictable name in world-writable `/tmp`, and the unit
   has `PrivateTmp=yes` — closing a symlink/TOCTOU write-through a local user

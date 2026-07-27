@@ -1,7 +1,8 @@
 # Architecture
 
 A contributor-facing map of how PhanSpeed fits together. User-facing docs are in
-the [README](../README.md).
+the [README](../README.md) and [USAGE.md](USAGE.md); the release ceremony is in
+[RELEASING.md](RELEASING.md).
 
 ## The hardware constraint that shapes everything
 
