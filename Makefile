@@ -32,13 +32,22 @@ verify-unit:
 		| grep -v 'not executable' | { ! grep . ; } && echo "unit OK"
 
 # drift guard for every vendored sutra file: integrity (hash matches what
-# vendor.sh recorded — the copy wasn't hand-edited) always runs; freshness
-# (diff against the canonical source) only when that checkout is present,
-# which it normally isn't in CI. pill.js (extension dir) checked the same way.
+# vendor.sh recorded — the copy wasn't hand-edited) is the hard gate, always
+# enforced. Freshness is a LAG-vs-DRIFT read (sutra's 0.7.0 ruling, custodian
+# recipe, thread 2ac0a67f — ByeByte's check-sutra is the reference shape):
+# a plain HEAD-compare reddened on ordinary LAG (an honest vendor from an
+# earlier canonical commit, indistinguishable on sight from actual
+# DRIFT/corruption), so this asks canonical git which of the two a recorded
+# .commit anchor actually is. LAG warns and exits 0; DRIFT (the recorded
+# commit isn't in canonical's history at all) is a hard fail. Only runs
+# when the canonical checkout is present, which it normally isn't in CI.
 check-sutra:
-	@for f in bin/sutra.py bin/sutra_update.py bin/sutra_xen.py $(EXT)/pill.js; do \
+	@real_home=$$(getent passwd "$${SUDO_USER:-$$(id -un)}" | cut -d: -f6); \
+	canon="$${real_home:-$$HOME}/code/REPOS/sutra"; \
+	for f in bin/sutra.py bin/sutra_update.py bin/sutra_xen.py $(EXT)/pill.js; do \
 	    vf="$${f%.py}"; vf="$${vf%.js}.version"; \
-	    ver=$$(cut -d' ' -f1 "$$vf" 2>/dev/null || echo ""); \
+	    cf="$${f%.py}"; cf="$${cf%.js}.commit"; \
+	    ver=$$(cut -d' ' -f1 "$$vf" 2>/dev/null); \
 	    sha=$$(awk '{print $$NF}' "$$vf" 2>/dev/null); \
 	    actual=$$(sha256sum "$$f" | cut -d' ' -f1); \
 	    if [ "$$sha" != "$$actual" ]; then \
@@ -46,15 +55,26 @@ check-sutra:
 	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh bin $(EXT))"; \
 	        exit 1; \
 	    fi; \
-	    echo "check-sutra: integrity ok ($$f, sutra $$ver, sha256 $$sha)"; \
-	    canon="$$HOME/code/REPOS/sutra/$$(basename $$f)"; \
-	    if [ -f "$$canon" ]; then \
-	        if cmp -s "$$f" "$$canon"; then \
-	            echo "check-sutra: freshness ok ($$f matches canonical)"; \
+	    echo "check-sutra: integrity ok ($$f, $$ver, sha256 $$sha)"; \
+	    if [ -d "$$canon/.git" ]; then \
+	        if [ ! -f "$$cf" ]; then \
+	            echo "check-sutra: freshness unknown ($$f has no .commit anchor, an older vendor)"; \
 	        else \
-	            echo "check-sutra FAIL: $$f differs from canonical $$canon (re-vendor)"; \
-	            exit 1; \
+	            recorded=$$(cat "$$cf"); \
+	            head=$$(git -C "$$canon" rev-parse HEAD); \
+	            if [ "$$recorded" = "$$head" ]; then \
+	                echo "check-sutra: freshness ok ($$f matches canonical HEAD $$head)"; \
+	            elif git -C "$$canon" merge-base --is-ancestor "$$recorded" HEAD 2>/dev/null; then \
+	                echo "check-sutra: LAG ($$f vendored from $$recorded, canonical has since" \
+	                     "moved to $$head) -- warn, not a failure"; \
+	            else \
+	                echo "check-sutra FAIL: DRIFT ($$f's vendored commit $$recorded is not in" \
+	                     "canonical's history at $$canon) -- re-vendor"; \
+	                exit 1; \
+	            fi; \
 	        fi; \
+	    else \
+	        echo "check-sutra: canonical sutra checkout not present, freshness skipped for $$f"; \
 	    fi; \
 	done
 
