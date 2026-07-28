@@ -107,7 +107,7 @@ check-repo:
 	    echo "check-repo FAIL: no src/data/man/man1/phanspeed.1 and no exemption for it"; fail=1; \
 	fi; \
 	rows=$$(find . -maxdepth 1 -mindepth 1 ! -name .git ! -name .claude ! -name .mcp.json \
-	    ! -name .ruff_cache ! -name dist ! -name __pycache__ | wc -l); \
+	    ! -name .ruff_cache ! -name dist ! -name build ! -name __pycache__ | wc -l); \
 	if [ "$$rows" -gt 12 ]; then \
 	    echo "check-repo FAIL: root has $$rows rows, standard caps it at 12"; fail=1; \
 	else \
