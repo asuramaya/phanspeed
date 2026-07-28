@@ -59,7 +59,7 @@ check-sutra:
 	@real_home=$$(getent passwd "$${SUDO_USER:-$$(id -un)}" | cut -d: -f6); \
 	canon="$${real_home:-$$HOME}/code/REPOS/sutra"; \
 	fail=0; \
-	for f in src/data/lib/sutra.py src/data/lib/sutra_update.py src/data/lib/sutra_xen.py $(EXT)/pill.js; do \
+	for f in src/share/phanspeed/lib/sutra.py src/share/phanspeed/lib/sutra_update.py src/share/phanspeed/lib/sutra_xen.py $(EXT)/pill.js; do \
 	    vf="$${f%.py}"; vf="$${vf%.js}.version"; \
 	    cf="$${f%.py}"; cf="$${cf%.js}.commit"; \
 	    ver=$$(cut -d' ' -f1 "$$vf" 2>/dev/null); \
@@ -67,7 +67,7 @@ check-sutra:
 	    actual=$$(sha256sum "$$f" | cut -d' ' -f1); \
 	    if [ "$$sha" != "$$actual" ]; then \
 	        echo "check-sutra FAIL: $$f doesn't match $$vf" \
-	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh src/data/lib $(EXT) --bootstrap=phanspeed)"; \
+	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh src/share/phanspeed/lib $(EXT) --bootstrap=phanspeed)"; \
 	        fail=1; continue; \
 	    fi; \
 	    echo "check-sutra: integrity ok ($$f, $$ver, sha256 $$sha)"; \
@@ -90,6 +90,24 @@ check-sutra:
 	        fi; \
 	    else \
 	        echo "check-sutra: canonical sutra checkout not present, freshness skipped for $$f"; \
+	    fi; \
+	done; \
+	for spec in "src/bin/phanspeedd --selftest" "src/bin/phanspeed-update --check" \
+	            "src/bin/phanspeed-healthcheck"; do \
+	    bin=$${spec%% *}; \
+	    out=$$(timeout 10 python3 $$spec 2>&1); rc=$$?; \
+	    if echo "$$out" | grep -qE 'ModuleNotFoundError|ImportError'; then \
+	        echo "check-sutra FAIL: $$bin can't import sutra run straight from the checkout" \
+	             "(unvendored, no staged prefix) -- the bootstrap preamble's" \
+	             "dirname(dirname(realpath(__file__)))/share/<pill>/lib arithmetic doesn't" \
+	             "resolve to where sutra actually sits; check-sutra's own integrity/freshness" \
+	             "loop above only proves the FILES match their anchors, never that a binary" \
+	             "can actually FIND them from the tree as checked out"; \
+	        echo "$$out" | tail -5; \
+	        fail=1; \
+	    else \
+	        echo "check-sutra: $$bin imports sutra ok when run straight from the checkout" \
+	             "(rc=$$rc, unrelated to import -- no real hardware/systemd/network here)"; \
 	    fi; \
 	done; \
 	exit $$fail
@@ -150,8 +168,8 @@ check-repo:
 
 check-py:
 	python3 -m py_compile src/bin/phanspeedd src/bin/phanspeed src/bin/phanspeed-tune src/bin/phanspeed-update \
-		src/bin/phanspeed-healthcheck src/data/lib/sutra.py src/data/lib/sutra_update.py \
-		src/data/lib/sutra_xen.py tests/diag.py
+		src/bin/phanspeed-healthcheck src/share/phanspeed/lib/sutra.py src/share/phanspeed/lib/sutra_update.py \
+		src/share/phanspeed/lib/sutra_xen.py tests/diag.py
 
 check-validation:
 	python3 tests/test_validation.py
@@ -195,4 +213,4 @@ deb:
 	bash packaging/build-deb.sh
 
 clean:
-	rm -rf dist __pycache__ src/bin/__pycache__ src/data/lib/__pycache__ tests/__pycache__ .ruff_cache
+	rm -rf dist __pycache__ src/bin/__pycache__ src/share/phanspeed/lib/__pycache__ tests/__pycache__ .ruff_cache

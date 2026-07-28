@@ -35,7 +35,7 @@ done
 # ruling 3e44bd95). .version/.commit travel with the .py so the installed
 # copy stays checkable (phanspeed-healthcheck verifies it), not just the
 # dev-tree one. sutra_xen ships unconditionally, unimported for now.
-for f in "$SRC"/src/data/lib/*; do
+for f in "$SRC"/src/share/phanspeed/lib/*; do
     [ -f "$f" ] || continue   # skip __pycache__ etc. left by a local py_compile
     install -m 0644 "$f" "$ROOT/usr/share/phanspeed/lib/$(basename "$f")"
 done

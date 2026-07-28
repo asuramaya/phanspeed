@@ -13,10 +13,18 @@ All notable changes to this project are documented here. The format is based on
   `dpkg -i` refuse every *other* pill on a machine that already had phanspeed
   installed (two packages can't both own the same file). The vendored copies
   move to a private per-pill directory instead:
-  - Dev tree: `src/bin/sutra*.{py,version,commit}` → `src/data/lib/` (same
-    convention coldspot is converging on — a sibling of `src/data/man/` and
-    `src/data/systemd/`, not a new top-level dir, so `make check-repo`'s row
-    count is unaffected).
+  - Dev tree: `src/bin/sutra*.{py,version,commit}` → `src/share/phanspeed/lib/`
+    (not `src/data/lib/`, which this repo's first pass at this change used —
+    the bootstrap preamble derives its lib dir as
+    `dirname(dirname(realpath(__file__)))/share/<pill>/lib`, so a binary run
+    straight from `src/bin/` in the checkout only resolves if the vendored
+    copy sits at that exact relative shape. `src/data/lib/` broke `python3
+    src/bin/phanspeedd --selftest` run unvendored from the checkout with a
+    `ModuleNotFoundError`, invisible to `make check`/CI because every test
+    harness pre-seeds `sys.path` itself rather than exercising the checkout
+    as the preamble actually would. Caught via Alfred's msg 1737 (coldspot
+    hit the identical defect choosing the identical directory) shortly after
+    this had already shipped in a prior commit on `main`; fixed same-day.
   - Installed: `/usr/bin/sutra*.py` (`.deb`) / `$PREFIX/bin/sutra*.py`
     (`install.sh`) → `/usr/share/phanspeed/lib/` / `$PREFIX/share/phanspeed/lib/`.
     `.version`/`.commit` now travel with the installed `.py`, not just the
@@ -44,10 +52,15 @@ All notable changes to this project are documented here. The format is based on
     version skew with the rest of the fleet (0.7.1); `sutra.py`'s own bytes
     are unchanged since 0.7.4 — 0.8.0 is a convention change, not a logic one.
   - `make check-sutra`/`check-py`, `packaging/ruff.toml`'s `extend-exclude`,
-    and `packaging/build-deb.sh` all repointed at `src/data/lib/`;
+    and `packaging/build-deb.sh` all point at `src/share/phanspeed/lib/`;
     `tests/*.py`'s manual `sys.path` seeding (needed because `SourceFileLoader`
-    skips the normal script-directory trick) now seeds `src/data/lib/`
-    instead of `src/bin/`.
+    skips the normal script-directory trick) seeds the same path instead of
+    `src/bin/`.
+  - `make check-sutra` now also runs each vendored binary straight from the
+    checkout (no vendoring, no staged prefix, no manual `sys.path` seeding)
+    and asserts `import sutra` resolves — the specific assertion that would
+    have caught the `src/data/lib/` defect above before it ever reached
+    `main`, not just after.
   - Verified against real Docker isolation, never the operator's live system
     (`PREFIX=/usr/local bash install.sh` inside a throwaway container): file
     layout inspected post-install, the installed `phanspeedd --selftest` and

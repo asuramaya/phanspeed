@@ -146,7 +146,7 @@ rm -f "$PREFIX"/bin/sutra*.py "$PREFIX"/bin/sutra*.version "$PREFIX"/bin/sutra*.
 # verifies it against these), not just the dev-tree one.
 echo "-- vendored sutra -> $PREFIX/share/phanspeed/lib"
 install -d -m 0755 "$PREFIX/share/phanspeed/lib"
-for f in "$SRC"/src/data/lib/*; do
+for f in "$SRC"/src/share/phanspeed/lib/*; do
   [[ -f "$f" ]] || continue   # skip __pycache__ etc. left by a local py_compile
   install -m 0644 -o root -g root "$f" "$PREFIX/share/phanspeed/lib/$(basename "$f")"
 done

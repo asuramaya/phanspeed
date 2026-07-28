@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(HERE, "src", "data", "lib"))
+sys.path.insert(0, os.path.join(HERE, "src", "share", "phanspeed", "lib"))
 import sutra_update as su  # noqa: E402
 
 PILL = "phanspeed"

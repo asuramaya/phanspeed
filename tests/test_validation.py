@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # phanspeedd finds sutra via its own bootstrap preamble when actually
 # installed (BOOTSTRAP.md); a direct SourceFileLoader load bypasses that
 # entirely, so the vendored lib dir needs adding here explicitly.
-sys.path.insert(0, os.path.join(HERE, "src", "data", "lib"))
+sys.path.insert(0, os.path.join(HERE, "src", "share", "phanspeed", "lib"))
 loader = machinery.SourceFileLoader("phanspeedd", os.path.join(HERE, "src", "bin", "phanspeedd"))
 spec = util.spec_from_loader("phanspeedd", loader)
 m = util.module_from_spec(spec)

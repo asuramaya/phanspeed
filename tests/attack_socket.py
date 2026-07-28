@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # installed (BOOTSTRAP.md); a direct SourceFileLoader load skips that
 # entirely (no __main__, no invoked-script sys.path trick either), so this
 # has to seed the vendored lib dir itself, same as the installed layout.
-sys.path.insert(0, os.path.join(HERE, "src", "data", "lib"))
+sys.path.insert(0, os.path.join(HERE, "src", "share", "phanspeed", "lib"))
 
 # Load the daemon module, redirect all runtime paths into a tempdir.
 tmp = tempfile.mkdtemp(prefix="phanspeed-test-")

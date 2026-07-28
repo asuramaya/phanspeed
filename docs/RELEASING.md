@@ -30,7 +30,7 @@ make attack          # adversarial fuzz of the control socket (needs real Dell h
 
 `check-sutra` failing on freshness (not lag) means the shared spine drifted or
 was hand-edited. Re-vendor before releasing rather than after:
-`bash ~/code/REPOS/sutra/vendor.sh src/data/lib src/extension/phanspeed@asuramaya --bootstrap=phanspeed`.
+`bash ~/code/REPOS/sutra/vendor.sh src/share/phanspeed/lib src/extension/phanspeed@asuramaya --bootstrap=phanspeed`.
 
 ## 2. Tag and publish
 
