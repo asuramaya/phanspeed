@@ -10,17 +10,31 @@ Thin wrapper over sutra.check_health() (UNIFY.md health helper, sutra
 phanspeed-specific magic number. Passive by itself — restarting on a bad
 verdict is this bin's own call, same as before.
 """
+import hashlib
 import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# --- sutra bootstrap (sutra 0.8.0; see BOOTSTRAP.md -- do not hand-edit) ----
+import os as _os
+import sys as _sys
+_PILL = "phanspeed"
+_libdir = _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))),
+    "share", _PILL, "lib")
+if _libdir not in _sys.path:
+    _sys.path.insert(0, _libdir)
+del _os, _sys, _libdir, _PILL
+# --- end sutra bootstrap ----------------------------------------------------
 import sutra  # noqa: E402
 
 STATUS_PATH = "/run/phanspeed/status.json"
 SOCK_PATH = "/run/phanspeed/control.sock"
 DEFAULT_POLL = 3.0  # phanspeed's own DEFAULTS["poll_interval"] — fallback only;
                     # status.json always carries the real value once written
+LIBDIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+    "share", "phanspeed", "lib")
 
 
 def restart(reason):
@@ -28,20 +42,50 @@ def restart(reason):
     subprocess.run(["systemctl", "restart", "phanspeed"])
 
 
+def verify_installed_sutra():
+    """Integrity of the INSTALLED sutra copies against their INSTALLED
+    anchors -- `make check-sutra` only ever reads the dev-tree copy, and
+    the machine runs the installed one; an anchorless installed copy is
+    exactly how a mixed-version sutra sat undetected before the
+    install-path bootstrap (BOOTSTRAP.md, ruling 3e44bd95). A mismatch
+    here means a tampered or corrupted install -- restarting phanspeed
+    wouldn't fix that, so this only reports, it never triggers restart().
+    """
+    ok = True
+    for mod in ("sutra", "sutra_update", "sutra_xen"):
+        py = os.path.join(LIBDIR, f"{mod}.py")
+        vf = os.path.join(LIBDIR, f"{mod}.version")
+        try:
+            recorded = open(vf).read().split()[-1]
+            actual = hashlib.sha256(open(py, "rb").read()).hexdigest()
+        except OSError as e:
+            print(f"[healthcheck] sutra integrity: {mod} unreadable ({e})")
+            ok = False
+            continue
+        if recorded != actual:
+            print(f"[healthcheck] SUTRA INTEGRITY FAIL: installed {mod}.py "
+                  "does not match its anchor -- tampered or corrupted install")
+            ok = False
+    return ok
+
+
 def main():
+    sutra_ok = verify_installed_sutra()
+    exit_code = 0 if sutra_ok else 1
+
     r = subprocess.run(["systemctl", "is-active", "--quiet", "phanspeed"])
     if r.returncode != 0:
         restart("service not active")
-        return 0
+        return exit_code
 
     healthy, reason, info = sutra.check_health(
         STATUS_PATH, SOCK_PATH, default_poll=DEFAULT_POLL)
     if not healthy:
         restart(reason)
-        return 0
+        return exit_code
 
     print(f"[healthcheck] ok (status {info['age']:.0f}s old)")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

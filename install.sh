@@ -11,6 +11,12 @@ USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
 EXT_UUID="phanspeed@asuramaya"
 EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+# Binaries AND the vendored sutra lib dir both scale off this -- the sutra
+# bootstrap preamble pasted into phanspeedd/phanspeed-update/phanspeed-
+# healthcheck infers its own prefix as dirname(dirname(its own installed
+# path)), so wherever the binaries actually land IS the prefix it expects
+# share/phanspeed/lib to sit beside (BOOTSTRAP.md).
+PREFIX="${PREFIX:-/usr/local}"
 
 # Pinned release-signing key (docs/RELEASE-SIGNING.md), for the bootstrap
 # below. A fresh `curl -fsSL .../install.sh | bash` fetches ONLY this file —
@@ -116,20 +122,40 @@ rm -f /usr/local/bin/dellfand /usr/local/bin/dellfanctl \
       /usr/local/share/icons/hicolor/scalable/apps/dellfanctl.svg 2>/dev/null || true
 
 # 1. daemon + healthcheck binaries (root-owned, not group/world writable)
-echo "-- installing daemon -> /usr/local/bin/phanspeedd"
-install -m 0755 -o root -g root "$SRC/src/bin/phanspeedd" /usr/local/bin/phanspeedd
-install -m 0755 -o root -g root "$SRC/src/bin/phanspeed" /usr/local/bin/phanspeed
-install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
-install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-tune" /usr/local/bin/phanspeed-tune
-install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-update" /usr/local/bin/phanspeed-update
-# vendored sutra backbone -- sibling of the bins that import it (phanspeedd:
-# `import sutra`; phanspeed-update: `import sutra_update`); sutra_xen ships
-# unconditionally alongside them, same as the vendored copy in src/bin/ (not
-# yet imported by anything -- see docs/RELEASE-SIGNING.md's Xen-era notes).
-install -m 0644 -o root -g root "$SRC/src/bin/sutra.py" /usr/local/bin/sutra.py
-install -m 0644 -o root -g root "$SRC/src/bin/sutra_update.py" /usr/local/bin/sutra_update.py
-install -m 0644 -o root -g root "$SRC/src/bin/sutra_xen.py" /usr/local/bin/sutra_xen.py
-# version marker so `phanspeed version` works on source installs too
+echo "-- installing daemon -> $PREFIX/bin/phanspeedd"
+install -d -m 0755 "$PREFIX/bin"
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeedd" "$PREFIX/bin/phanspeedd"
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed" "$PREFIX/bin/phanspeed"
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-healthcheck" "$PREFIX/bin/phanspeed-healthcheck"
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-tune" "$PREFIX/bin/phanspeed-tune"
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-update" "$PREFIX/bin/phanspeed-update"
+# An older install left vendored sutra copies beside the binaries in
+# $PREFIX/bin -- nothing else ever cleans those up, and a stale, unanchored
+# duplicate lying around is exactly the blind spot that let two prefixes run
+# different canonical commits undetected before the install-path bootstrap
+# (BOOTSTRAP.md, ruling 3e44bd95).
+rm -f "$PREFIX"/bin/sutra*.py "$PREFIX"/bin/sutra*.version "$PREFIX"/bin/sutra*.commit
+# vendored sutra backbone -- found via the bootstrap preamble pasted at the
+# top of every binary that imports it (phanspeedd: `import sutra`;
+# phanspeed-update: `import sutra_update`; phanspeed-healthcheck: `import
+# sutra`), a PRIVATE per-pill dir, never $PREFIX/bin: two pills vendoring
+# identically-named sutra.py into the same shared bin dir make each other
+# uninstallable (dpkg refuses the second outright; a plain `install` here
+# would silently overwrite, anchors included). .version/.commit travel with
+# the .py so the installed copy stays checkable (phanspeed-healthcheck
+# verifies it against these), not just the dev-tree one.
+echo "-- vendored sutra -> $PREFIX/share/phanspeed/lib"
+install -d -m 0755 "$PREFIX/share/phanspeed/lib"
+for f in "$SRC"/src/data/lib/*; do
+  [[ -f "$f" ]] || continue   # skip __pycache__ etc. left by a local py_compile
+  install -m 0644 -o root -g root "$f" "$PREFIX/share/phanspeed/lib/$(basename "$f")"
+done
+# version marker so `phanspeed version` works on source installs too. Fixed
+# at /usr/share/phanspeed, NOT $PREFIX: phanspeed-update's
+# installed_version() fallback and VERSION_FILE both read this one absolute
+# path regardless of install method, matching the .deb's own
+# /usr/share/phanspeed/VERSION -- it has to be discoverable without already
+# knowing which prefix was used.
 install -d -m 0755 /usr/share/phanspeed
 install -m 0644 "$SRC/packaging/VERSION" /usr/share/phanspeed/VERSION
 # release-signing trust anchor (docs/RELEASE-SIGNING.md) -- empty until a key
@@ -185,8 +211,9 @@ systemctl enable --now phanspeed.service
 systemctl enable --now phanspeed-healthcheck.timer
 # NOTE: the daily auto-update timer is intentionally NOT enabled for a source
 # install — auto-update installs a .deb (into /usr/bin), which would be shadowed
-# by these /usr/local/bin copies. `phanspeed update --check` still works for
-# manual notification; install the .deb for in-place auto-updates.
+# by these $PREFIX/bin copies whenever $PREFIX/bin precedes /usr/bin on PATH
+# (true for the default /usr/local). `phanspeed update --check` still works
+# for manual notification; install the .deb for in-place auto-updates.
 
 # 4. GNOME Shell extension (into the real user's home)
 echo "-- installing Quick Settings extension -> $EXT_DIR"
@@ -213,10 +240,10 @@ verify() {  # path  expected-octal
   if [[ "$got" == "$want" ]]; then echo "   OK   $p ($got)"
   else echo "   WARN $p is $got, expected $want"; fi
 }
-verify /usr/local/bin/phanspeedd 755
+verify "$PREFIX/bin/phanspeedd" 755
 verify /etc/phanspeed/config.json 600
 verify /etc/systemd/system/phanspeed.service 644
-ww="$(find /usr/local/bin/phanspeedd /etc/phanspeed /etc/systemd/system/phanspeed.service -perm -o+w 2>/dev/null || true)"
+ww="$(find "$PREFIX/bin/phanspeedd" /etc/phanspeed /etc/systemd/system/phanspeed.service -perm -o+w 2>/dev/null || true)"
 [[ -z "$ww" ]] && echo "   OK   no world-writable install artifacts" || echo "   WARN world-writable: $ww"
 
 echo

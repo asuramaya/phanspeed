@@ -18,7 +18,7 @@ install -d "$ROOT/DEBIAN" \
           "$ROOT/usr/bin" \
           "$ROOT/lib/systemd/system" \
           "$ROOT/usr/share/gnome-shell/extensions/phanspeed@asuramaya" \
-          "$ROOT/usr/share/phanspeed" \
+          "$ROOT/usr/share/phanspeed/lib" \
           "$ROOT/usr/share/man/man1" \
           "$ROOT/usr/share/man/man8" \
           "$ROOT/etc/phanspeed"
@@ -28,12 +28,17 @@ for b in phanspeedd phanspeed phanspeed-healthcheck phanspeed-tune phanspeed-upd
     install -m 0755 "$SRC/src/bin/$b" "$ROOT/usr/bin/$b"
 done
 
-# vendored sutra backbone -> sibling of the bins that import it (they add
-# their own directory to sys.path automatically; none of these are
-# executable themselves). sutra_xen ships unconditionally, unimported for now.
-install -m 0644 "$SRC/src/bin/sutra.py" "$ROOT/usr/bin/sutra.py"
-install -m 0644 "$SRC/src/bin/sutra_update.py" "$ROOT/usr/bin/sutra_update.py"
-install -m 0644 "$SRC/src/bin/sutra_xen.py" "$ROOT/usr/bin/sutra_xen.py"
+# vendored sutra backbone -> a PRIVATE per-pill dir under /usr/share, found
+# via the bootstrap preamble pasted at the top of every binary that imports
+# it -- never /usr/bin, where two pills vendoring identically-named
+# sutra.py would make dpkg refuse the second package outright (BOOTSTRAP.md,
+# ruling 3e44bd95). .version/.commit travel with the .py so the installed
+# copy stays checkable (phanspeed-healthcheck verifies it), not just the
+# dev-tree one. sutra_xen ships unconditionally, unimported for now.
+for f in "$SRC"/src/data/lib/*; do
+    [ -f "$f" ] || continue   # skip __pycache__ etc. left by a local py_compile
+    install -m 0644 "$f" "$ROOT/usr/share/phanspeed/lib/$(basename "$f")"
+done
 
 # man pages
 install -m 0644 "$SRC/src/data/man/man1/phanspeed.1" "$ROOT/usr/share/man/man1/phanspeed.1"

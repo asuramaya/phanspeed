@@ -58,7 +58,8 @@ verify-unit:
 check-sutra:
 	@real_home=$$(getent passwd "$${SUDO_USER:-$$(id -un)}" | cut -d: -f6); \
 	canon="$${real_home:-$$HOME}/code/REPOS/sutra"; \
-	for f in src/bin/sutra.py src/bin/sutra_update.py src/bin/sutra_xen.py $(EXT)/pill.js; do \
+	fail=0; \
+	for f in src/data/lib/sutra.py src/data/lib/sutra_update.py src/data/lib/sutra_xen.py $(EXT)/pill.js; do \
 	    vf="$${f%.py}"; vf="$${vf%.js}.version"; \
 	    cf="$${f%.py}"; cf="$${cf%.js}.commit"; \
 	    ver=$$(cut -d' ' -f1 "$$vf" 2>/dev/null); \
@@ -66,8 +67,8 @@ check-sutra:
 	    actual=$$(sha256sum "$$f" | cut -d' ' -f1); \
 	    if [ "$$sha" != "$$actual" ]; then \
 	        echo "check-sutra FAIL: $$f doesn't match $$vf" \
-	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh src/bin $(EXT))"; \
-	        exit 1; \
+	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh src/data/lib $(EXT) --bootstrap=phanspeed)"; \
+	        fail=1; continue; \
 	    fi; \
 	    echo "check-sutra: integrity ok ($$f, $$ver, sha256 $$sha)"; \
 	    if [ -d "$$canon/.git" ]; then \
@@ -84,13 +85,14 @@ check-sutra:
 	            else \
 	                echo "check-sutra FAIL: DRIFT ($$f's vendored commit $$recorded is not in" \
 	                     "canonical's history at $$canon) -- re-vendor"; \
-	                exit 1; \
+	                fail=1; \
 	            fi; \
 	        fi; \
 	    else \
 	        echo "check-sutra: canonical sutra checkout not present, freshness skipped for $$f"; \
 	    fi; \
-	done
+	done; \
+	exit $$fail
 
 # The family's structural gate (REPO-STANDARD.md §5), mechanical only: it
 # cannot judge whether a document is any good, only that the shape it's
@@ -148,7 +150,8 @@ check-repo:
 
 check-py:
 	python3 -m py_compile src/bin/phanspeedd src/bin/phanspeed src/bin/phanspeed-tune src/bin/phanspeed-update \
-		src/bin/phanspeed-healthcheck src/bin/sutra.py src/bin/sutra_update.py src/bin/sutra_xen.py tests/diag.py
+		src/bin/phanspeed-healthcheck src/data/lib/sutra.py src/data/lib/sutra_update.py \
+		src/data/lib/sutra_xen.py tests/diag.py
 
 check-validation:
 	python3 tests/test_validation.py
@@ -192,4 +195,4 @@ deb:
 	bash packaging/build-deb.sh
 
 clean:
-	rm -rf dist __pycache__ src/bin/__pycache__ tests/__pycache__ .ruff_cache
+	rm -rf dist __pycache__ src/bin/__pycache__ src/data/lib/__pycache__ tests/__pycache__ .ruff_cache

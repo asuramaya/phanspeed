@@ -6,6 +6,7 @@ REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$REAL_USER")"
 EXT_UUID="phanspeed@asuramaya"
+PREFIX="${PREFIX:-/usr/local}"
 if [[ $EUID -ne 0 ]]; then exec sudo -E bash "$0" "$@"; fi
 
 echo "== uninstalling PhanSpeed =="
@@ -18,9 +19,17 @@ rm -f /etc/systemd/system/phanspeed.service \
       /etc/systemd/system/phanspeed-healthcheck.timer \
       /etc/systemd/system/phanspeed-update.service \
       /etc/systemd/system/phanspeed-update.timer
-rm -f /usr/local/bin/phanspeedd /usr/local/bin/phanspeed \
-      /usr/local/bin/phanspeed-healthcheck /usr/local/bin/phanspeed-tune \
-      /usr/local/bin/phanspeed-update
+rm -f "$PREFIX/bin/phanspeedd" "$PREFIX/bin/phanspeed" \
+      "$PREFIX/bin/phanspeed-healthcheck" "$PREFIX/bin/phanspeed-tune" \
+      "$PREFIX/bin/phanspeed-update"
+# $PREFIX/share/phanspeed/lib (the current vendor location, see install.sh)
+# is covered by the rm -rf below. An install from before the private-lib-dir
+# move (BOOTSTRAP.md, ruling 3e44bd95) may have left vendored sutra copies
+# beside the binaries instead -- nothing else on the machine cleans those up.
+rm -f "$PREFIX"/bin/sutra*.py "$PREFIX"/bin/sutra*.version "$PREFIX"/bin/sutra*.commit
+rm -rf "$PREFIX/share/phanspeed"
+# VERSION + the release-signing anchor install.sh writes at a fixed path
+# regardless of $PREFIX (see install.sh's note on why).
 rm -rf /usr/share/phanspeed
 systemctl daemon-reload
 

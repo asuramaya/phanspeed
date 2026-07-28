@@ -4,6 +4,57 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.32.0] — 2026-07-28
+
+### Changed
+- **Adopted sutra's install-path bootstrap (sutra 0.8.0, BOOTSTRAP.md, ruling
+  `3e44bd95`)** — phanspeed's `.deb` owned `/usr/bin/sutra.py`,
+  `/usr/bin/sutra_update.py` and `/usr/bin/sutra_xen.py` outright, which made
+  `dpkg -i` refuse every *other* pill on a machine that already had phanspeed
+  installed (two packages can't both own the same file). The vendored copies
+  move to a private per-pill directory instead:
+  - Dev tree: `src/bin/sutra*.{py,version,commit}` → `src/data/lib/` (same
+    convention coldspot is converging on — a sibling of `src/data/man/` and
+    `src/data/systemd/`, not a new top-level dir, so `make check-repo`'s row
+    count is unaffected).
+  - Installed: `/usr/bin/sutra*.py` (`.deb`) / `$PREFIX/bin/sutra*.py`
+    (`install.sh`) → `/usr/share/phanspeed/lib/` / `$PREFIX/share/phanspeed/lib/`.
+    `.version`/`.commit` now travel with the installed `.py`, not just the
+    dev-tree copy — an anchorless installed copy was exactly how a
+    mixed-version sutra could sit undetected before this.
+  - **`phanspeedd`, `phanspeed-update`, `phanspeed-healthcheck`** each gained
+    the canonical bootstrap preamble (pasted verbatim, per BOOTSTRAP.md —
+    never hand-derived) immediately before their `import sutra`/`import
+    sutra_update` line, replacing the old bare `sys.path.insert(0,
+    dirname(__file__))` trick that stops working once sutra isn't co-located
+    with the binaries anymore.
+  - **`install.sh` gained a `$PREFIX` variable** (default `/usr/local`,
+    overridable) — the one change beyond the move itself: binaries and the
+    sutra lib dir both now scale off it, since the bootstrap preamble infers
+    its own prefix from wherever the binary that's running actually sits.
+    Both `install.sh` and `uninstall.sh` clean up any sutra copies an older
+    install left beside the binaries in `$PREFIX/bin`, which nothing
+    previously cleaned up on its own.
+  - **`phanspeed-healthcheck` now verifies the *installed* sutra copies
+    against their *installed* anchors** (sha256, same check `make
+    check-sutra` runs against the dev tree, just pointed at what the machine
+    actually runs) — reports loudly on a mismatch without attempting a
+    restart, since a corrupted install isn't something a restart fixes.
+  - Re-vendored `sutra`/`sutra_update`/`sutra_xen` 0.7.4 → 0.8.0, closing the
+    version skew with the rest of the fleet (0.7.1); `sutra.py`'s own bytes
+    are unchanged since 0.7.4 — 0.8.0 is a convention change, not a logic one.
+  - `make check-sutra`/`check-py`, `packaging/ruff.toml`'s `extend-exclude`,
+    and `packaging/build-deb.sh` all repointed at `src/data/lib/`;
+    `tests/*.py`'s manual `sys.path` seeding (needed because `SourceFileLoader`
+    skips the normal script-directory trick) now seeds `src/data/lib/`
+    instead of `src/bin/`.
+  - Verified against real Docker isolation, never the operator's live system
+    (`PREFIX=/usr/local bash install.sh` inside a throwaway container): file
+    layout inspected post-install, the installed `phanspeedd --selftest` and
+    `phanspeed-update --check` both ran the real pasted preamble successfully,
+    and the new integrity check was tested both ways — clean install (silent
+    pass) and a hand-tampered `sutra.py` (caught, reported, non-restarting).
+
 ## [0.31.0] — 2026-07-21
 
 ### Changed
