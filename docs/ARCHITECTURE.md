@@ -23,7 +23,7 @@ PhanSpeed never tries to set fan speed. The levers that *do* work:
 
 Other firmware levers seen **locked** on this class of machine and deliberately
 not pursued: voltage **undervolting** (OC mailbox MSR 0x150 swallows offsets —
-Plundervolt) and direct **fan RPM**. `diag.py` re-confirms what a given machine
+Plundervolt) and direct **fan RPM**. `tests/diag.py` re-confirms what a given machine
 allows. The daemon also *reads* per-core frequency to **detect** a hardware power
 clamp (BD PROCHOT) — see the control loop below.
 
@@ -123,7 +123,7 @@ daemon lets it rather than fighting it with an extra GPU-side clamp.
 On exit/crash the profile, CPU PL1, GPU limit, turbo, and EPP are restored to
 neutral defaults, and any Endure panel/kbd trim + forced dGPU runtime PM is undone.
 
-## Security model (see also [SECURITY.md](../SECURITY.md))
+## Security model (see also [SECURITY.md](../.github/SECURITY.md))
 
 The daemon is root with a world-reachable socket, so **every input is hostile**:
 
@@ -145,7 +145,7 @@ The daemon is root with a world-reachable socket, so **every input is hostile**:
 - `allow_uids`, when unset, falls back to root + the **single seat owner**
   (`_status_target_uid`), not every logged-in session — verified live
   (`CapEff=0x1`) and narrowed in a self-audit (v0.25.0), which also hardened
-  the separate, networked [update path](../SECURITY.md#update-path).
+  the separate, networked [update path](../.github/SECURITY.md#update-path).
 
 ## Tests
 

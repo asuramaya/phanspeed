@@ -63,7 +63,7 @@ guardrails are **mandatory** before it ships:
 
 ## Status
 
-- **Tier 1 — RAPL power auto-tune:** implemented in `bin/phanspeed-tune`
+- **Tier 1 — RAPL power auto-tune:** implemented in `src/bin/phanspeed-tune`
   (`--target ac|battery|both`). Safe; no new daemon capability.
 - **Tier 2 — undervolt auto-tune:** blocked on (a) verifying undervolt works at
   all on this firmware (Plundervolt/SGX may swallow offsets) and (b) the

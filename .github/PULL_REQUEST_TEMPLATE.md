@@ -7,9 +7,9 @@
 ## Checklist
 
 - [ ] `python3 tests/attack_socket.py` prints **ALL ATTACKS DEFENDED**
-- [ ] `python3 -m py_compile bin/phanspeedd` is clean
-- [ ] `node --check extension/phanspeed@asuramaya/extension.js` is clean (if touched)
-- [ ] `systemd-analyze verify ./systemd/phanspeed.service` is clean (if touched)
+- [ ] `python3 -m py_compile src/bin/phanspeedd` is clean
+- [ ] `node --check src/extension/phanspeed@asuramaya/extension.js` is clean (if touched)
+- [ ] `systemd-analyze verify ./src/data/systemd/system/phanspeed.service` is clean (if touched)
 - [ ] Any new socket/config field is validated & clamped in `sanitize_config` and
       added to the fuzz lists in `tests/attack_socket.py`
 - [ ] Daemon stays dependency-free (Python stdlib only)

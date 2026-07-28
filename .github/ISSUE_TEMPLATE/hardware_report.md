@@ -19,7 +19,7 @@ labels: hardware
 - Kernel (`uname -r`):
 - GNOME Shell version:
 - `cat /sys/firmware/acpi/platform_profile_choices`:
-- Output of `sudo python3 diag.py`:
+- Output of `sudo python3 tests/diag.py`:
 
 ```
 <!-- paste diag.py output -->

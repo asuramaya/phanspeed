@@ -44,8 +44,8 @@ STATUS_PATH = "/run/phanspeed/status.json"
 CONFIG_PATH = "/etc/phanspeed/config.json"
 
 VERSION_PATHS = ("/usr/share/phanspeed/VERSION",
-                 os.path.join(os.path.dirname(os.path.dirname(
-                     os.path.abspath(__file__))), "packaging", "VERSION"))
+                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+                     os.path.abspath(__file__)))), "packaging", "VERSION"))
 
 PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
 CHOICES_PATH = "/sys/firmware/acpi/platform_profile_choices"

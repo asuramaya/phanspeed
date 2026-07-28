@@ -787,7 +787,7 @@ least-privilege defaults. This release closes those.
   - 🔥 **Perf** — full power + boost where allowed (clock/watts is the metric).
   - 🔋 **Endure** — minimise total draw to live on a power trickle (the
     **power-balance / break-even gauge** is the metric).
-  See [docs/MISSIONS.md](docs/MISSIONS.md).
+  See [docs/MISSIONS.md](MISSIONS.md).
 - **`mission` + `intensity` config** (`""`/`cool`/`perf`/`endure`; `0–4`). A
   mission owns the whole stance (profile + CPU power + EPP + turbo + GPU);
   `""` keeps the legacy `mode`/`manual_profile` behaviour. `intensity` is how

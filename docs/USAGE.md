@@ -129,8 +129,9 @@ base TDP automatically.
 **The pill doesn't do anything, or profile writes fail.** Direct fan RPM/PWM
 control is impossible on locked-down Dell firmware, that's expected;
 `platform_profile` is the lever PhanSpeed uses instead. Run `sudo python3
-diag.py` from a clone to see exactly what your machine allows: it's a one-shot,
-safe probe that restores original state and never leaves anything changed.
+tests/diag.py` from a clone to see exactly what your machine allows: it's a
+one-shot, safe probe that restores original state and never leaves anything
+changed.
 
 **Your Dell model isn't confirmed working.** File a [hardware
 report](../.github/ISSUE_TEMPLATE/hardware_report.md) with your model and

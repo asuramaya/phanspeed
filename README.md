@@ -89,7 +89,18 @@ authorization, a hard-capped 95 °C failsafe that can't be disabled from the
 socket or a tampered config, and a heavily sandboxed systemd unit (one
 capability, no network, seccomp-filtered). Full breakdown in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model-see-also-securitymd);
-vulnerability reporting in [SECURITY.md](SECURITY.md).
+vulnerability reporting in [SECURITY.md](.github/SECURITY.md).
+
+## Map
+
+| | |
+|---|---|
+| Use it | [docs/USAGE.md](docs/USAGE.md), or `man phanspeed` / `man phanspeedd` |
+| Change it | [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) |
+| Understand how it's built | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Cut a release | [docs/RELEASING.md](docs/RELEASING.md) |
+| See what changed | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| Report a vulnerability | [.github/SECURITY.md](.github/SECURITY.md) |
 
 ## Install
 
@@ -138,22 +149,11 @@ update via `git pull && ./install.sh`.)
 | `platform_profile` | must exist: `cat /sys/firmware/acpi/platform_profile_choices` |
 | `dell-smm-hwmon` | for temp/fan readout (loaded by default on Dell) |
 | Python | 3.x stdlib only (no pip deps) |
-| `openssh-client` | `ssh-keygen`, for release-signature verification (see [packages.txt](packages.txt)) |
+| `openssh-client` | `ssh-keygen`, for release-signature verification (see [packages.txt](packaging/packages.txt)) |
 
 Confirmed: **Dell Precision 5770**. Other Dells with `platform_profile` should
 work; if yours doesn't behave, or you'd like to confirm a new model, see
 [docs/USAGE.md](docs/USAGE.md#troubleshooting).
-
-## Learn more
-
-| | |
-|---|---|
-| Use it day to day | [docs/USAGE.md](docs/USAGE.md) |
-| Understand how it's built | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Cut a release | [docs/RELEASING.md](docs/RELEASING.md) |
-| See what changed | [CHANGELOG.md](CHANGELOG.md) |
-| Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Report a vulnerability | [SECURITY.md](SECURITY.md) |
 
 License: [GPL-3.0-or-later](LICENSE).
 

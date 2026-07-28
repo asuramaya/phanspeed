@@ -21,9 +21,10 @@ import tempfile
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # phanspeedd imports sutra as a sibling (the vendored layout); a direct
 # SourceFileLoader load bypasses the sys.path[0]-is-the-script's-dir trick a
-# normal `bin/phanspeedd` invocation gets for free, so bin/ needs adding here.
-sys.path.insert(0, os.path.join(HERE, "bin"))
-loader = machinery.SourceFileLoader("phanspeedd", os.path.join(HERE, "bin", "phanspeedd"))
+# normal `src/bin/phanspeedd` invocation gets for free, so src/bin/ needs
+# adding here.
+sys.path.insert(0, os.path.join(HERE, "src", "bin"))
+loader = machinery.SourceFileLoader("phanspeedd", os.path.join(HERE, "src", "bin", "phanspeedd"))
 spec = util.spec_from_loader("phanspeedd", loader)
 m = util.module_from_spec(spec)
 loader.exec_module(m)
@@ -189,7 +190,7 @@ print("fan-aware failsafe logic OK")
 
 # ---- phanspeed doctor: read-only reporter logic ---- #
 ploader = machinery.SourceFileLoader("phanspeed_cli",
-                                     os.path.join(HERE, "bin", "phanspeed"))
+                                     os.path.join(HERE, "src", "bin", "phanspeed"))
 pcli = util.module_from_spec(util.spec_from_loader("phanspeed_cli", ploader))
 ploader.exec_module(pcli)
 

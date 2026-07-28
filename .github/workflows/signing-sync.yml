@@ -1,5 +1,6 @@
 name: signing-sync
-# Enforces RELEASE.md's sync-signers invariant: release-signing/allowed_signers
+# Enforces RELEASE.md's sync-signers invariant:
+# packaging/release-signing/allowed_signers
 # (and install.sh's embedded twin) must always be either (a) empty — the
 # pre-arming shipping state, verification inert — or (b) exactly 4 well-formed
 # lines, identical between the file and the embedded copy modulo the one
@@ -32,7 +33,7 @@ jobs:
           import re
           import sys
 
-          anchor = open("release-signing/allowed_signers").read()
+          anchor = open("packaging/release-signing/allowed_signers").read()
           install = open("install.sh").read()
           m = re.search(r"RELEASE_ALLOWED_SIGNERS='(.*?)'", install, re.DOTALL)
           if not m:
@@ -65,7 +66,8 @@ jobs:
           # normalized away rather than byte-for-byte.
           if embedded != anchor.rstrip("\n"):
               sys.exit("DRIFT: install.sh's embedded RELEASE_ALLOWED_SIGNERS "
-                        "does not match release-signing/allowed_signers. "
+                        "does not match "
+                        "packaging/release-signing/allowed_signers. "
                         "Re-run 'mudra sync-signers phanspeed' and commit the "
                         "result — never hand-edit either.")
           print("embedded copy matches the anchor file OK")

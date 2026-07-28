@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(HERE, "bin"))
+sys.path.insert(0, os.path.join(HERE, "src", "bin"))
 import sutra_update as su  # noqa: E402
 
 PILL = "phanspeed"
@@ -33,18 +33,18 @@ if subprocess.run(["ssh-keygen", "-Y", "sign"], capture_output=True).returncode 
 # in .github/workflows/signing-sync.yml; this can't confirm the keys are the
 # operator's actual canonical set (this test can't reach
 # ~/.ssh/asuramaya-master), only that the anchor's shape is sane either way.
-with open(os.path.join(HERE, "release-signing", "allowed_signers")) as f:
+with open(os.path.join(HERE, "packaging", "release-signing", "allowed_signers")) as f:
     anchor_content = f.read()
 if anchor_content.strip():
     anchor_lines = [ln for ln in anchor_content.split("\n") if ln.strip()]
     assert len(anchor_lines) == 4, (
-        f"release-signing/allowed_signers is armed but has {len(anchor_lines)} "
-        "lines, expected exactly 4")
+        f"packaging/release-signing/allowed_signers is armed but has "
+        f"{len(anchor_lines)} lines, expected exactly 4")
     print("shipped allowed_signers is armed with 4 keys OK")
 else:
     print("shipped allowed_signers is the empty placeholder OK")
 
-assert su.armed(os.path.join(HERE, "release-signing", "allowed_signers")) == \
+assert su.armed(os.path.join(HERE, "packaging", "release-signing", "allowed_signers")) == \
     bool(anchor_content.strip()), "sutra_update.armed() disagrees with the shape check above"
 print("sutra_update.armed() agrees with the shipped anchor's state OK")
 

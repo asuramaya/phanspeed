@@ -35,7 +35,7 @@ phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AA
 # so no signature check could ever mean anything applied to it. Anyone
 # wanting a source install instead should clone the repo and run this script
 # from within it — untouched, and skips this block entirely.
-if [[ ! -f "$SRC/bin/phanspeedd" ]]; then
+if [[ ! -f "$SRC/src/bin/phanspeedd" ]]; then
   echo "== fetching latest PhanSpeed release =="
   command -v dpkg >/dev/null || {
     echo "dpkg not found — this quick-install path needs a Debian/Ubuntu"
@@ -117,24 +117,24 @@ rm -f /usr/local/bin/dellfand /usr/local/bin/dellfanctl \
 
 # 1. daemon + healthcheck binaries (root-owned, not group/world writable)
 echo "-- installing daemon -> /usr/local/bin/phanspeedd"
-install -m 0755 -o root -g root "$SRC/bin/phanspeedd" /usr/local/bin/phanspeedd
-install -m 0755 -o root -g root "$SRC/bin/phanspeed" /usr/local/bin/phanspeed
-install -m 0755 -o root -g root "$SRC/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
-install -m 0755 -o root -g root "$SRC/bin/phanspeed-tune" /usr/local/bin/phanspeed-tune
-install -m 0755 -o root -g root "$SRC/bin/phanspeed-update" /usr/local/bin/phanspeed-update
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeedd" /usr/local/bin/phanspeedd
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed" /usr/local/bin/phanspeed
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-healthcheck" /usr/local/bin/phanspeed-healthcheck
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-tune" /usr/local/bin/phanspeed-tune
+install -m 0755 -o root -g root "$SRC/src/bin/phanspeed-update" /usr/local/bin/phanspeed-update
 # vendored sutra backbone -- sibling of the bins that import it (phanspeedd:
 # `import sutra`; phanspeed-update: `import sutra_update`); sutra_xen ships
-# unconditionally alongside them, same as the vendored copy in bin/ (not yet
-# imported by anything -- see docs/RELEASE-SIGNING.md's Xen-era notes).
-install -m 0644 -o root -g root "$SRC/bin/sutra.py" /usr/local/bin/sutra.py
-install -m 0644 -o root -g root "$SRC/bin/sutra_update.py" /usr/local/bin/sutra_update.py
-install -m 0644 -o root -g root "$SRC/bin/sutra_xen.py" /usr/local/bin/sutra_xen.py
+# unconditionally alongside them, same as the vendored copy in src/bin/ (not
+# yet imported by anything -- see docs/RELEASE-SIGNING.md's Xen-era notes).
+install -m 0644 -o root -g root "$SRC/src/bin/sutra.py" /usr/local/bin/sutra.py
+install -m 0644 -o root -g root "$SRC/src/bin/sutra_update.py" /usr/local/bin/sutra_update.py
+install -m 0644 -o root -g root "$SRC/src/bin/sutra_xen.py" /usr/local/bin/sutra_xen.py
 # version marker so `phanspeed version` works on source installs too
 install -d -m 0755 /usr/share/phanspeed
 install -m 0644 "$SRC/packaging/VERSION" /usr/share/phanspeed/VERSION
 # release-signing trust anchor (docs/RELEASE-SIGNING.md) -- empty until a key
 # is provisioned; phanspeed-update degrades to SHA256-only until it isn't
-install -m 0644 "$SRC/release-signing/allowed_signers" \
+install -m 0644 "$SRC/packaging/release-signing/allowed_signers" \
         /usr/share/phanspeed/allowed_signers
 
 # 2. default config (auto mode); allow_uids locks control to the installing user
@@ -177,9 +177,9 @@ chmod 0600 /etc/phanspeed/config.json
 
 # 3. systemd service + healthcheck timer
 echo "-- installing + enabling phanspeed.service"
-install -m 0644 "$SRC/systemd/phanspeed.service" /etc/systemd/system/phanspeed.service
-install -m 0644 "$SRC/systemd/phanspeed-healthcheck.service" /etc/systemd/system/phanspeed-healthcheck.service
-install -m 0644 "$SRC/systemd/phanspeed-healthcheck.timer" /etc/systemd/system/phanspeed-healthcheck.timer
+install -m 0644 "$SRC/src/data/systemd/system/phanspeed.service" /etc/systemd/system/phanspeed.service
+install -m 0644 "$SRC/src/data/systemd/system/phanspeed-healthcheck.service" /etc/systemd/system/phanspeed-healthcheck.service
+install -m 0644 "$SRC/src/data/systemd/system/phanspeed-healthcheck.timer" /etc/systemd/system/phanspeed-healthcheck.timer
 systemctl daemon-reload
 systemctl enable --now phanspeed.service
 systemctl enable --now phanspeed-healthcheck.timer
@@ -192,11 +192,11 @@ systemctl enable --now phanspeed-healthcheck.timer
 echo "-- installing Quick Settings extension -> $EXT_DIR"
 sudo -u "$REAL_USER" mkdir -p "$EXT_DIR"
 install -m 0644 -o "$REAL_USER" -g "$REAL_USER" \
-  "$SRC/extension/$EXT_UUID/metadata.json" "$EXT_DIR/metadata.json"
+  "$SRC/src/extension/$EXT_UUID/metadata.json" "$EXT_DIR/metadata.json"
 install -m 0644 -o "$REAL_USER" -g "$REAL_USER" \
-  "$SRC/extension/$EXT_UUID/extension.js" "$EXT_DIR/extension.js"
+  "$SRC/src/extension/$EXT_UUID/extension.js" "$EXT_DIR/extension.js"
 install -m 0644 -o "$REAL_USER" -g "$REAL_USER" \
-  "$SRC/extension/$EXT_UUID/pill.js" "$EXT_DIR/pill.js"
+  "$SRC/src/extension/$EXT_UUID/pill.js" "$EXT_DIR/pill.js"
 
 echo "-- enabling extension for $REAL_USER"
 sudo -u "$REAL_USER" \

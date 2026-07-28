@@ -111,4 +111,4 @@ Missions sit on top of the same failsafe as everything else: the thermal
 **emergency override** always wins (above `emergency_temp` the daemon forces max
 cooling + base TDP regardless of mission), and `sanitize_config()` validates
 `mission`/`intensity` like every other socket-settable field. See
-[ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](../SECURITY.md).
+[ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](../.github/SECURITY.md).

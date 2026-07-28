@@ -40,15 +40,22 @@ jobs:
         run: |
           # Format-agnostic: grabs the section starting at the first `## `
           # heading whose text contains the tag's version, up to (not
-          # including) the next `## ` heading.
+          # including) the next `## ` heading. REPO-STANDARD.md (2026-07-27):
+          # never --generate-notes, a human wrote this entry and a commit
+          # dump is not release notes -- refuse the release if the section
+          # is missing rather than falling back quietly.
           ver="${GITHUB_REF_NAME#v}"
-          awk -v v="$ver" 'BEGIN{f=0} /^## / { if(f) exit; if(index($0,v)){f=1;print;next} } f{print}' CHANGELOG.md > RELEASE_NOTES.md
+          awk -v v="$ver" 'BEGIN{f=0} /^## / { if(f) exit; if(index($0,v)){f=1;print;next} } f{print}' docs/CHANGELOG.md > RELEASE_NOTES.md
           echo "--- extracted release notes ($(wc -l < RELEASE_NOTES.md) lines) ---"
           cat RELEASE_NOTES.md
+          if [ "$(wc -l < RELEASE_NOTES.md)" -lt 2 ]; then
+            echo "::error::no docs/CHANGELOG.md section for ${ver}; add one before tagging"
+            exit 1
+          fi
 
       # No signing step here, deliberately: phanspeed-update and install.sh
       # trust an SSH signature (ssh-keygen -Y verify) against a key pinned
-      # INSIDE the client (release-signing/allowed_signers,
+      # INSIDE the client (packaging/release-signing/allowed_signers,
       # docs/RELEASE-SIGNING.md), precisely so this CI (or the GitHub account
       # behind it) is not the trust root. A secret/hardware key living in
       # Actions secrets would let anyone who compromises the account or the
@@ -67,15 +74,7 @@ jobs:
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
           else
-            # Prefer the extracted CHANGELOG section; fall back to GitHub's
-            # auto-generated notes if extraction came up empty/too-thin
-            # (e.g. a version bump with no matching heading).
-            if [ "$(wc -l < RELEASE_NOTES.md)" -ge 2 ]; then
-              notes_flag=(--notes-file RELEASE_NOTES.md)
-            else
-              notes_flag=(--generate-notes)
-            fi
             gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
               --title "phanspeed ${GITHUB_REF_NAME}" \
-              "${notes_flag[@]}"
+              --notes-file RELEASE_NOTES.md
           fi

@@ -37,10 +37,11 @@ import sutra_update  # noqa: E402
 REPO_SLUG = "asuramaya/phanspeed"
 PILL = "phanspeed"
 VERSION_FILE = "/usr/share/phanspeed/VERSION"
-_SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 ANCHOR_CANDIDATES = (
     "/usr/share/phanspeed/allowed_signers",
-    os.path.join(_SRC_DIR, "release-signing", "allowed_signers"),
+    os.path.join(_REPO_ROOT, "packaging", "release-signing", "allowed_signers"),
 )
 
 

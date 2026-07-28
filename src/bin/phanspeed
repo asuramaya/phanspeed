@@ -29,8 +29,8 @@ import time
 SOCK_PATH = "/run/phanspeed/control.sock"
 STATUS_PATH = "/run/phanspeed/status.json"
 VERSION_FILES = ("/usr/share/phanspeed/VERSION",
-                 os.path.join(os.path.dirname(os.path.dirname(
-                     os.path.abspath(__file__))), "packaging", "VERSION"))
+                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+                     os.path.abspath(__file__)))), "packaging", "VERSION"))
 PROFILES = ("quiet", "balanced", "cool", "performance")
 EPPS = ("performance", "balance_performance", "balance_power", "power")
 MISSIONS = ("cool", "perf", "endure")

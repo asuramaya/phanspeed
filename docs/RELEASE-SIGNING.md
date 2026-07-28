@@ -5,10 +5,10 @@ Repo-specific notes. The canonical, fleet-wide doctrine lives in
 gestalt · sutra) — read that first; this file is phanspeed's application of
 it.
 
-Status: **ARMED (v0.30.1+).** `release-signing/allowed_signers` (and
+Status: **ARMED (v0.30.1+).** `packaging/release-signing/allowed_signers` (and
 install.sh's embedded twin, `RELEASE_ALLOWED_SIGNERS`) carry the fleet's 4
 canonical pubkeys — verification is now MANDATORY and fail-closed. Both
-`install.sh`'s curl-pipe-bash bootstrap and `bin/phanspeed-update` fetch and
+`install.sh`'s curl-pipe-bash bootstrap and `src/bin/phanspeed-update` fetch and
 verify the release's own `.deb` + `SHA256SUMS` (a manifest covering the
 `.deb` **and** the release tarball, one file, `.github/workflows/
 release.yml`), then require a valid `SHA256SUMS.sig` before installing — no
@@ -76,7 +76,7 @@ identity via `mudra sync-signers`, never freshly minted.
 ```
 
 `mudra` (the fleet's seal desk, `~/code/REPOS/mudra`) rebuilds
-`release-signing/allowed_signers` — always a full rebuild from **all**
+`packaging/release-signing/allowed_signers` — always a full rebuild from **all**
 canonical keys, never an append (RA's first ceremony left 3 of 4 keys
 unpinned by appending one at a time) — from `~/.ssh/asuramaya-master/*.pub`
 (exactly 4, refuses otherwise), and syncs the copy into `install.sh`'s
@@ -106,9 +106,9 @@ gh release upload vX.Y.Z SHA256SUMS.sig
 
 ## Verification (client side — already built, v0.29.2 + v0.29.4)
 
-Both `bin/phanspeed-update` and `install.sh`'s curl-pipe-bash bootstrap:
+Both `src/bin/phanspeed-update` and `install.sh`'s curl-pipe-bash bootstrap:
 
-1. Check whether `release-signing/allowed_signers` has any real key line
+1. Check whether `packaging/release-signing/allowed_signers` has any real key line
    (blank/absent → **skip verification, print a warning, fall back to
    SHA256-only** — today's behavior, so nothing breaks before a key exists).
 2. If a real key is present: require a `SHA256SUMS.sig` asset on the release.
@@ -118,7 +118,7 @@ Both `bin/phanspeed-update` and `install.sh`'s curl-pipe-bash bootstrap:
    signature; this one must not).
 
 ```sh
-ssh-keygen -Y verify -f release-signing/allowed_signers \
+ssh-keygen -Y verify -f packaging/release-signing/allowed_signers \
   -I phanspeed -n phanspeed-release \
   -s dist/SHA256SUMS.sig < dist/SHA256SUMS
 ```
@@ -144,6 +144,6 @@ the exact same assets `phanspeed-update` verifies — checks them the same way,
 and `dpkg -i`s the verified `.deb` directly (escalating only that one command
 via `sudo`, not the whole script). Anyone wanting a source install instead
 still clones the repo and runs `install.sh` from within it — that path is
-unchanged and skips this block entirely, since `bin/phanspeedd` already
+unchanged and skips this block entirely, since `src/bin/phanspeedd` already
 exists locally in that case. Requires `dpkg` on the host; a clear error
 points source-install users at the checkout path if it's missing.

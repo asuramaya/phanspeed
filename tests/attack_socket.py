@@ -21,13 +21,13 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# phanspeedd imports sutra as a sibling (the vendored layout); needs bin/ on
-# sys.path since a direct SourceFileLoader load skips the usual script-dir trick.
-sys.path.insert(0, os.path.join(HERE, "bin"))
+# phanspeedd imports sutra as a sibling (the vendored layout); needs src/bin/
+# on sys.path since a direct SourceFileLoader load skips the usual script-dir trick.
+sys.path.insert(0, os.path.join(HERE, "src", "bin"))
 
 # Load the daemon module, redirect all runtime paths into a tempdir.
 tmp = tempfile.mkdtemp(prefix="phanspeed-test-")
-loader = M.SourceFileLoader("phanspeedd", os.path.join(HERE, "bin", "phanspeedd"))
+loader = M.SourceFileLoader("phanspeedd", os.path.join(HERE, "src", "bin", "phanspeedd"))
 spec = U.spec_from_loader("phanspeedd", loader)
 m = U.module_from_spec(spec)
 loader.exec_module(m)
