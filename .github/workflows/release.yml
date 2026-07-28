@@ -13,13 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Verify tag matches VERSION
+      - name: Verify tag matches packaging/VERSION
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          file="$(tr -d '[:space:]' < VERSION)"
+          file="$(tr -d '[:space:]' < packaging/VERSION)"
           echo "tag=${tag} VERSION=${file}"
           if [ "${tag}" != "${file}" ]; then
-            echo "::error::tag ${tag} does not match VERSION ${file}"
+            echo "::error::tag ${tag} does not match packaging/VERSION ${file}"
             exit 1
           fi
 

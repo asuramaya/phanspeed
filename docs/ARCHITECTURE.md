@@ -57,7 +57,8 @@ shared `sutra.check_health()` formula, UNIFY.md health helper).
 **Packaging:** `make deb` / `packaging/build-deb.sh` builds a `.deb` (dpkg-deb, no
 debhelper) installing binaries to `/usr/bin`, units to `/lib/systemd/system`, the
 extension system-wide, and a default config conffile. `install.sh` is the
-source/one-line (`curl | bash`) path. `VERSION` is the single source of truth.
+source/one-line (`curl | bash`) path. `packaging/VERSION` is the single source
+of truth.
 
 ## Missions (`mission` + `intensity`)
 

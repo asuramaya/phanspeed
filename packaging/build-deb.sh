@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-VER="$(tr -d '[:space:]' < "$SRC/VERSION")"
+VER="$(tr -d '[:space:]' < "$SRC/packaging/VERSION")"
 PKG="phanspeed"
 DIST="$SRC/dist"
 BUILD="$(mktemp -d)"

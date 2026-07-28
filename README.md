@@ -5,13 +5,13 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![No deps](https://img.shields.io/badge/dependencies-stdlib%20only-success)
 
-Dell thermal/fan control for GNOME, living where it belongs — a **Quick
+Dell thermal/fan control for GNOME, living where it belongs: a **Quick
 Settings pill** next to Wi-Fi and Bluetooth. Built and tested on a **Precision
 5770** (GNOME 50, Wayland); should work on any Dell that exposes
 `platform_profile` via `dell-smm-hwmon`.
 
 > **Not affiliated with or endorsed by Dell.** "Dell", "Precision", and "XPS"
-> are trademarks of their respective owners. Use at your own risk — see the
+> are trademarks of their respective owners. Use at your own risk: see the
 > [thermal failsafe](#security-model) and the no-warranty terms in the license.
 
 <p align="center">
@@ -25,7 +25,7 @@ and convert the WebM to GIF (e.g. `ffmpeg -i clip.webm docs/demo.gif`).</sub>
 
 ## Why a "thermal" pill and not RPM sliders
 
-Direct fan/RPM control is **firmware-locked** on modern Dells — verified on this
+Direct fan/RPM control is **firmware-locked** on modern Dells, verified on this
 machine: `pwm_enable` accepts only `1` (BIOS-auto), and `pwm` writes are ignored
 (`EINVAL`). No Linux tool can set fan RPM here. The one lever the firmware honors
 is the ACPI **platform_profile**: `cool · quiet · balanced · performance`.
@@ -35,17 +35,17 @@ curve the hardware allows).
 
 ## Two missions (+ one that still works, just not on the pill)
 
-PhanSpeed is one governor fighting the things that cripple a laptop — you pick
+PhanSpeed is one governor fighting the things that cripple a laptop. You pick
 which fight it's in, and the pill re-skins to that mission's metric:
 
-- 🔥 **Perf** — *unleash*: take everything the chassis allows, including the
+- 🔥 **Perf** · *unleash*: take everything the chassis allows, including the
   most aggressive cooling profile. (Born from fixed fans.)
-- 🔋 **Endure** — *survive power*: minimise draw to **live on a power trickle** —
+- 🔋 **Endure** · *survive power*: minimise draw to **live on a power trickle**,
   closed-loop CPU cap to **break-even**, dGPU sleep, panel/kbd trims, with a live
   `+2W ▲ / −8W ▼` balance gauge. (Born from a 20 W charger.)
 
 🧊 **Cool** (*survive heat*, born from a dead fan that's since been repaired)
-is still a fully working mission — `phanspeed mission cool` — it's just not a
+is still a fully working mission (`phanspeed mission cool`); it's just not a
 pill chip: Perf's own cooling-profile pick already covers the same ground
 mechanically (its max-cooling choice *is* the `cool` ACPI profile), so a third
 chip was a distinction without a difference.
@@ -72,7 +72,7 @@ Full day-to-day interaction, every mode and menu: [docs/USAGE.md](docs/USAGE.md)
 
 There's deliberately no GPU power/temp widget: `nvidia-smi -pl` is firmware-locked
 on this class of hardware anyway, and polling the dGPU to show live numbers keeps
-it awake — which can starve the CPU's power budget under AC (see
+it awake, which can starve the CPU's power budget under AC (see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the BD PROCHOT finding). The
 Endure mission still puts the dGPU to sleep when idle; it just doesn't poll it
 for a widget.
@@ -93,7 +93,7 @@ vulnerability reporting in [SECURITY.md](SECURITY.md).
 
 ## Install
 
-**Option A — `.deb` (recommended; gets update notices):**
+**Option A, `.deb` (recommended; gets update notices):**
 
 ```bash
 sudo apt install ./phanspeed_*.deb        # from a GitHub release, or `make deb`
@@ -103,7 +103,7 @@ gnome-extensions enable phanspeed@asuramaya   # then log out/in once (Wayland)
 The package installs the daemon, healthcheck, auto-tuner, the system-wide
 extension, and a daily **update-check** timer (`phanspeed-update.timer`) that
 looks for newer GitHub releases and surfaces an **⬆ Update to vX.Y.Z** notice in
-the pill — it never installs anything unattended. Installing is a deliberate,
+the pill; it never installs anything unattended. Installing is a deliberate,
 interactive step: click the pill's update item (a `pkexec` prompt) or run `sudo
 phanspeed update` yourself. Either way the download is verified against the
 release's `SHA256SUMS` and, once the release is sealed, a detached SSH
@@ -112,20 +112,20 @@ control; the install is refused (fails closed) on any mismatch or missing
 signature. Disable the check timer any time with `sudo systemctl disable --now
 phanspeed-update.timer`.
 
-**Option B — one-line install (fetches the latest release):**
+**Option B, one-line install (fetches the latest release):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/asuramaya/phanspeed/main/install.sh | bash
 ```
 
-**Option C — from a clone:**
+**Option C, from a clone:**
 
 ```bash
 cd phanspeed
 ./install.sh          # sudo: daemon + service, then extension into your home
 ```
 
-Either way, **log out and back in once** — Wayland has to restart the shell to
+Either way, **log out and back in once**: Wayland has to restart the shell to
 load a brand-new extension. After that the pill is there permanently; no more
 logouts. (The update-check timer is a `.deb`-only feature; source installs
 update via `git pull && ./install.sh`.)

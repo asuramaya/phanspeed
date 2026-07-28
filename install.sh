@@ -131,7 +131,7 @@ install -m 0644 -o root -g root "$SRC/bin/sutra_update.py" /usr/local/bin/sutra_
 install -m 0644 -o root -g root "$SRC/bin/sutra_xen.py" /usr/local/bin/sutra_xen.py
 # version marker so `phanspeed version` works on source installs too
 install -d -m 0755 /usr/share/phanspeed
-install -m 0644 "$SRC/VERSION" /usr/share/phanspeed/VERSION
+install -m 0644 "$SRC/packaging/VERSION" /usr/share/phanspeed/VERSION
 # release-signing trust anchor (docs/RELEASE-SIGNING.md) -- empty until a key
 # is provisioned; phanspeed-update degrades to SHA256-only until it isn't
 install -m 0644 "$SRC/release-signing/allowed_signers" \

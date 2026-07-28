@@ -46,7 +46,7 @@ jobs:
       - name: Build .deb
         run: |
           bash packaging/build-deb.sh
-          dpkg-deb --info dist/phanspeed_"$(cat VERSION)"_all.deb >/dev/null
+          dpkg-deb --info dist/phanspeed_"$(cat packaging/VERSION)"_all.deb >/dev/null
 
 # Note: tests/attack_socket.py requires real Dell hardware (dell-smm-hwmon +
 # platform_profile) and is run by maintainers on-device, not in CI.
