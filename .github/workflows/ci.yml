@@ -11,49 +11,48 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Every step below runs a Makefile target and nothing else -- the
+      # command itself lives in the Makefile, one place, so a step here and
+      # `make check` locally can never silently disagree the way this
+      # workflow's old hand-duplicated command lists did (found and ruled on
+      # in PS-STD-1: five straight red CI runs, invisible to every "make
+      # check green" gate report, because nobody had checked whether ci.yml's
+      # own copy of each command still matched). Named steps stay, for a
+      # readable Actions UI; only the target name is repo-specific.
       - name: sutra drift guard (integrity)
         run: make check-sutra
 
       - name: Python compiles
-        run: python3 -m py_compile src/bin/phanspeedd src/bin/phanspeed src/bin/phanspeed-tune src/bin/phanspeed-update src/bin/phanspeed-healthcheck src/bin/sutra.py src/bin/sutra_update.py src/bin/sutra_xen.py tests/diag.py
+        run: make check-py
 
       - name: Config validation (fuzz, hardware-free)
-        run: python3 tests/test_validation.py
+        run: make check-validation
 
       - name: Release-signing tests
-        run: python3 tests/test_signing.py
+        run: make check-signing
 
       - name: Ruff lint
         run: |
           python3 -m pip install --quiet ruff
-          ruff check --config packaging/ruff.toml .
+          make lint-ruff
 
       - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh packaging/make-extension-zip.sh packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm packaging/activate-uuid-migration.sh
+        run: make lint-shell
 
       - name: Shell scripts parse
-        run: bash -n install.sh && bash -n uninstall.sh
+        run: make check-shell-syntax
 
       - name: Extension JS syntax
-        run: node --check src/extension/phanspeed@asuramaya/extension.js src/extension/phanspeed@asuramaya/pill.js
+        run: make check-js
 
       - name: metadata.json is valid
-        run: python3 -c "import json; json.load(open('src/extension/phanspeed@asuramaya/metadata.json'))"
+        run: make check-json
 
       - name: systemd unit verifies
-        run: |
-          # ExecStart binary isn't installed in CI; ignore only that line.
-          systemd-analyze verify ./src/data/systemd/system/phanspeed.service 2>&1 \
-            | grep -v 'not executable' | { ! grep .; }
+        run: make verify-unit
 
       - name: man page (syntax)
-        # groff directly, not `man`/mandb: the ubuntu-latest image strips man
-        # pages at unpack time and stubs the man command, so it can't be used
-        # to prove a page is well-formed (REPO-STANDARD.md's container note).
-        # -t and -k: phanspeedd.8 has a .TS/.TE table (needs tbl) and both
-        # pages carry literal UTF-8 (needs preconv); without both flags this
-        # runs clean (exit 0) but silently skips real verification of either.
-        run: groff -t -k -man -Tutf8 -ww src/data/man/man1/phanspeed.1 src/data/man/man8/phanspeedd.8 > /dev/null
+        run: make check-man
 
       - name: Repo structure gate (REPO-STANDARD.md)
         # Before the deb build, deliberately: that step's own dist/ output is
@@ -62,9 +61,7 @@ jobs:
         run: make check-repo
 
       - name: Build .deb
-        run: |
-          bash packaging/build-deb.sh
-          dpkg-deb --info dist/phanspeed_"$(cat packaging/VERSION)"_all.deb >/dev/null
+        run: make check-deb
 
 # Note: tests/attack_socket.py requires real Dell hardware (dell-smm-hwmon +
 # platform_profile) and is run by maintainers on-device, not in CI.

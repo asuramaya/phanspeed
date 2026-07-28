@@ -1,7 +1,9 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := src/extension/phanspeed@asuramaya
 
-.PHONY: help install uninstall lint attack test pack deb check verify-unit check-sutra check-repo clean
+.PHONY: help install uninstall lint lint-ruff lint-shell attack test pack deb check-deb check \
+	verify-unit check-sutra check-repo check-py check-validation check-signing check-js \
+	check-json check-shell-syntax check-man clean
 
 help:
 	@echo "PhanSpeed targets:"
@@ -22,11 +24,22 @@ install:
 uninstall:
 	sudo ./uninstall.sh
 
-lint:
+# Split into two so CI can report each separately (a named step per target,
+# REPO-STANDARD.md's ruling: ci.yml calls Makefile targets, never carries its
+# own copy of the command behind one); `make lint` still runs both together.
+lint-ruff:
 	ruff check --config packaging/ruff.toml .
+
+lint-shell:
 	shellcheck install.sh uninstall.sh packaging/make-extension-zip.sh \
 		packaging/build-deb.sh packaging/debian/postinst packaging/debian/prerm \
 		packaging/debian/postrm packaging/activate-uuid-migration.sh
+
+lint: lint-ruff lint-shell
+
+check-shell-syntax:
+	bash -n install.sh
+	bash -n uninstall.sh
 
 verify-unit:
 	@systemd-analyze verify ./src/data/systemd/system/phanspeed.service 2>&1 \
@@ -134,13 +147,35 @@ check-repo:
 	fi; \
 	if [ "$$fail" -eq 0 ]; then echo "check-repo: all mechanical checks passed"; else exit 1; fi
 
-check: check-sutra lint verify-unit
+check-py:
 	python3 -m py_compile src/bin/phanspeedd src/bin/phanspeed src/bin/phanspeed-tune src/bin/phanspeed-update \
 		src/bin/phanspeed-healthcheck src/bin/sutra.py src/bin/sutra_update.py src/bin/sutra_xen.py tests/diag.py
+
+check-validation:
 	python3 tests/test_validation.py
+
+check-signing:
 	python3 tests/test_signing.py
+
+check-js:
 	node --check $(EXT)/extension.js $(EXT)/pill.js
+
+check-json:
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
+
+# groff directly, not `man`/mandb: the ubuntu-latest CI image strips man
+# pages at unpack time and stubs the man command (REPO-STANDARD.md's
+# container note). -t and -k: phanspeedd.8 has a .TS/.TE table (needs tbl)
+# and both pages carry literal UTF-8 (needs preconv); without both flags
+# this runs clean (exit 0) but silently skips real verification of either.
+check-man:
+	groff -t -k -man -Tutf8 -ww src/data/man/man1/phanspeed.1 src/data/man/man8/phanspeedd.8 > /dev/null
+
+check-deb: deb
+	dpkg-deb --info dist/phanspeed_"$$(cat packaging/VERSION)"_all.deb >/dev/null
+
+check: check-sutra lint verify-unit check-shell-syntax check-py check-validation check-signing \
+	check-js check-json check-man
 	@echo "all static checks passed"
 
 # the thorough adversarial pass (full cmd surface + oversized/garbage/nested/
