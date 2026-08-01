@@ -42,27 +42,45 @@ def restart(reason):
     subprocess.run(["systemctl", "restart", "phanspeed"])
 
 
+def _module_sutra_ok(mod):
+    """None when the anchor is missing (older install, predates the
+    install-path bootstrap, can't verify); otherwise True/False for
+    whether the installed <mod>.py's own sha256 still matches the
+    .version anchor installed beside it. Till's RAMstein form
+    (_installed_sutra_ok) is the reference shape."""
+    py = os.path.join(LIBDIR, f"{mod}.py")
+    vf = os.path.join(LIBDIR, f"{mod}.version")
+    try:
+        recorded = open(vf).read().split()[-1]
+    except (OSError, IndexError):
+        return None
+    actual = hashlib.sha256(open(py, "rb").read()).hexdigest()
+    return recorded == actual
+
+
 def verify_installed_sutra():
     """Integrity of the INSTALLED sutra copies against their INSTALLED
     anchors -- `make check-sutra` only ever reads the dev-tree copy, and
     the machine runs the installed one; an anchorless installed copy is
     exactly how a mixed-version sutra sat undetected before the
-    install-path bootstrap (BOOTSTRAP.md, ruling 3e44bd95). A mismatch
-    here means a tampered or corrupted install -- restarting phanspeed
-    wouldn't fix that, so this only reports, it never triggers restart().
+    install-path bootstrap (BOOTSTRAP.md, ruling 3e44bd95).
+
+    Three states per module, not two: matches, does not match, or the
+    anchor is missing entirely -- an install from before this week's
+    migration has no anchor at all, which means "can't verify", not
+    "tampered". Collapsing that third state into a failure was a real
+    bug (maat's finding, e0aaa447): every pre-migration install on this
+    machine would have reported itself corrupted. Only an actual
+    mismatch is a failure; restarting phanspeed wouldn't fix that
+    either, so this only reports, it never triggers restart().
     """
     ok = True
     for mod in ("sutra", "sutra_update", "sutra_xen"):
-        py = os.path.join(LIBDIR, f"{mod}.py")
-        vf = os.path.join(LIBDIR, f"{mod}.version")
-        try:
-            recorded = open(vf).read().split()[-1]
-            actual = hashlib.sha256(open(py, "rb").read()).hexdigest()
-        except OSError as e:
-            print(f"[healthcheck] sutra integrity: {mod} unreadable ({e})")
-            ok = False
-            continue
-        if recorded != actual:
+        state = _module_sutra_ok(mod)
+        if state is None:
+            print(f"[healthcheck] sutra integrity: {mod} anchor missing "
+                  "(older install, predates the install-path bootstrap -- can't verify)")
+        elif state is False:
             print(f"[healthcheck] SUTRA INTEGRITY FAIL: installed {mod}.py "
                   "does not match its anchor -- tampered or corrupted install")
             ok = False

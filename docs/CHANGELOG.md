@@ -68,6 +68,21 @@ All notable changes to this project are documented here. The format is based on
     and the new integrity check was tested both ways — clean install (silent
     pass) and a hand-tampered `sutra.py` (caught, reported, non-restarting).
 
+### Fixed
+- **`phanspeed-healthcheck`'s installed-copy integrity check reported a
+  missing anchor as tampering** (maat's finding while reading this
+  implementation as kast's reference, `e0aaa447`) — `verify_installed_sutra()`
+  caught `except OSError` around the `.version` read, which also catches
+  `FileNotFoundError`: any install from before this week's install-path
+  migration has no anchor at all and was reported as *corrupted* rather than
+  *unverifiable*, two different things. Fixed to a real three-state read
+  (matches / does not match / anchor missing, matching Till's RAMstein
+  reference shape `_installed_sutra_ok`) — only an actual hash mismatch is
+  now a failure; a missing anchor logs "can't verify" and is not one.
+  Negative-tested all three states directly against fixture install dirs, not
+  just the fix: anchor present and matching, anchor present and mismatched,
+  anchor absent.
+
 ## [0.31.0] — 2026-07-21
 
 ### Changed
