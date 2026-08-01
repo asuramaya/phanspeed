@@ -83,6 +83,29 @@ All notable changes to this project are documented here. The format is based on
   just the fix: anchor present and matching, anchor present and mismatched,
   anchor absent.
 
+### Changed
+- **Adopted `sutra.mk` + `pill-ci.yml`** (sutra 0.11.1, the family's shared
+  Make recipe layer and reusable CI workflow — see `docs/BOOTSTRAP.md` and
+  `docs/ARCHITECTURE.md` in this repo). `check-sutra` (integrity+freshness of
+  the three vendored `.py` modules, plus `pill.js` via the new
+  `SUTRA_EXT_DIR` opt-in), the root row-count check (`SUTRA_ROOT_ROWS`, same
+  `git ls-files` logic this repo adopted independently a few commits earlier),
+  and `check-vendored-path`/`check-vendored-path-all` (the checkout-run
+  resolution guard — loads each sutra-importing binary as a real module and
+  compares its actual resolved `__file__` against the expected path, strictly
+  stronger than the old `ModuleNotFoundError`-grep version this replaces) are
+  now `include`d rather than hand-rolled. `.github/workflows/ci.yml` splits
+  into a `shared` job (`uses: asuramaya/sutra/.github/workflows/pill-ci.yml`,
+  pinned to a commit SHA) and a `phanspeed-specific` job carrying only what's
+  genuinely local: the vendored-path guard across all three bootstrap-carrying
+  binaries, `ruff`, the systemd unit verify, and the `.deb` build. New `make
+  smoke` target (`check-validation` + `check-signing`, phanspeed's
+  hardware-free daemon/signing tests) fills the input `pill-ci.yml` expects
+  for that stage. Re-vendored `sutra`/`sutra_update`/`sutra_xen` 0.8.0 →
+  0.11.1 and `pill.js` to the matching stamp (bytes unchanged). No behavior
+  change for operators; CI-equivalence verified via `gh run view --job=<id>`
+  per step, not just the overall run status.
+
 ## [0.31.0] — 2026-07-21
 
 ### Changed
