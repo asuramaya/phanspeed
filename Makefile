@@ -1,9 +1,48 @@
 # PhanSpeed — common tasks. Run `make help` for the list.
 EXT := src/extension/phanspeed@asuramaya
 
+# The family's shared recipe layer (sutra.mk, vendored like code under its
+# own .version/.commit anchor -- see docs/BOOTSTRAP.md in the sutra repo
+# and ruling 3e44bd95). Supplies check-sutra (integrity+freshness for the
+# three vendored .py modules, plus pill.js via SUTRA_EXT_DIR below),
+# SUTRA_ROOT_ROWS (the canonical tracked-files row count check-repo uses),
+# and check-vendored-path[-all] (the checkout-run resolution guard). PILL
+# must be set before the include; everything else in sutra.mk resolves
+# relative to its own vendored location, never this Makefile's.
+PILL := phanspeed
+include src/share/phanspeed/lib/sutra.mk
+
+# phanspeed vendors pill.js too (sutra.mk's own check-sutra loops only the
+# three .py modules by default; this opts pill.js into the same
+# integrity+freshness check via sutra.mk's own escape hatch). sutra 0.11.1
+# resolves this Make-level throughout (patsubst, not a shell read of an
+# unexported Make variable) -- the 0.11.0 form needed `export SUTRA_EXT_DIR`
+# as a workaround (Werner's ByeByte fix); that workaround is unnecessary on
+# 0.11.1, which closes the gap at its source instead.
+SUTRA_EXT_DIR := $(EXT)
+
+# sutra.mk's check-vendored-path validates one binary per call; phanspeed
+# carries the bootstrap preamble in three (phanspeedd, phanspeed-update,
+# phanspeed-healthcheck -- phanspeed and phanspeed-tune don't import
+# sutra), so check-vendored-path-all loops it. phanspeed-update binds
+# sutra_update, not sutra -- the ":sutra_update" form checks that one
+# against the right attribute; the other two take sutra.mk's own default
+# (SUTRA_CHECK_MODULE=sutra).
+SUTRA_CHECK_BINS := src/bin/phanspeedd src/bin/phanspeed-healthcheck src/bin/phanspeed-update:sutra_update
+
+# phanspeedd/phanspeed-update already carry pill-specific, author-verified
+# safe flags (--selftest / --check) rather than a generic --help assumed
+# harmless -- sutra.mk's SUTRA_CHECK_ARGS doc names this pattern as the
+# model after a hand-rolled arg parser elsewhere fell through an
+# unrecognized --help into a live default verb. Left unset here
+# deliberately: check-vendored-path's resolution check (which module a
+# binary actually imported) is safe against any binary regardless of
+# argument parsing and needs no subprocess call to prove it, so this adds
+# no coverage phanspeed's own check-sutra guard didn't already have.
+
 .PHONY: help install uninstall lint lint-ruff lint-shell attack test pack deb check-deb check \
-	verify-unit check-sutra check-repo check-py check-validation check-signing check-js \
-	check-json check-shell-syntax check-man clean
+	verify-unit check-repo check-py check-validation check-signing check-js \
+	check-json check-shell-syntax check-man smoke clean
 
 help:
 	@echo "PhanSpeed targets:"
@@ -45,72 +84,14 @@ verify-unit:
 	@systemd-analyze verify ./src/data/systemd/system/phanspeed.service 2>&1 \
 		| grep -v 'not executable' | { ! grep . ; } && echo "unit OK"
 
-# drift guard for every vendored sutra file: integrity (hash matches what
-# vendor.sh recorded — the copy wasn't hand-edited) is the hard gate, always
-# enforced. Freshness is a LAG-vs-DRIFT read (sutra's 0.7.0 ruling, custodian
-# recipe, thread 2ac0a67f — ByeByte's check-sutra is the reference shape):
-# a plain HEAD-compare reddened on ordinary LAG (an honest vendor from an
-# earlier canonical commit, indistinguishable on sight from actual
-# DRIFT/corruption), so this asks canonical git which of the two a recorded
-# .commit anchor actually is. LAG warns and exits 0; DRIFT (the recorded
-# commit isn't in canonical's history at all) is a hard fail. Only runs
-# when the canonical checkout is present, which it normally isn't in CI.
-check-sutra:
-	@real_home=$$(getent passwd "$${SUDO_USER:-$$(id -un)}" | cut -d: -f6); \
-	canon="$${real_home:-$$HOME}/code/REPOS/sutra"; \
-	fail=0; \
-	for f in src/share/phanspeed/lib/sutra.py src/share/phanspeed/lib/sutra_update.py src/share/phanspeed/lib/sutra_xen.py $(EXT)/pill.js; do \
-	    vf="$${f%.py}"; vf="$${vf%.js}.version"; \
-	    cf="$${f%.py}"; cf="$${cf%.js}.commit"; \
-	    ver=$$(cut -d' ' -f1 "$$vf" 2>/dev/null); \
-	    sha=$$(awk '{print $$NF}' "$$vf" 2>/dev/null); \
-	    actual=$$(sha256sum "$$f" | cut -d' ' -f1); \
-	    if [ "$$sha" != "$$actual" ]; then \
-	        echo "check-sutra FAIL: $$f doesn't match $$vf" \
-	             "(hand-edited? re-vendor: bash ~/code/REPOS/sutra/vendor.sh src/share/phanspeed/lib $(EXT) --bootstrap=phanspeed)"; \
-	        fail=1; continue; \
-	    fi; \
-	    echo "check-sutra: integrity ok ($$f, $$ver, sha256 $$sha)"; \
-	    if [ -d "$$canon/.git" ]; then \
-	        if [ ! -f "$$cf" ]; then \
-	            echo "check-sutra: freshness unknown ($$f has no .commit anchor, an older vendor)"; \
-	        else \
-	            recorded=$$(cat "$$cf"); \
-	            head=$$(git -C "$$canon" rev-parse HEAD); \
-	            if [ "$$recorded" = "$$head" ]; then \
-	                echo "check-sutra: freshness ok ($$f matches canonical HEAD $$head)"; \
-	            elif git -C "$$canon" merge-base --is-ancestor "$$recorded" HEAD 2>/dev/null; then \
-	                echo "check-sutra: LAG ($$f vendored from $$recorded, canonical has since" \
-	                     "moved to $$head) -- warn, not a failure"; \
-	            else \
-	                echo "check-sutra FAIL: DRIFT ($$f's vendored commit $$recorded is not in" \
-	                     "canonical's history at $$canon) -- re-vendor"; \
-	                fail=1; \
-	            fi; \
-	        fi; \
-	    else \
-	        echo "check-sutra: canonical sutra checkout not present, freshness skipped for $$f"; \
-	    fi; \
-	done; \
-	for spec in "src/bin/phanspeedd --selftest" "src/bin/phanspeed-update --check" \
-	            "src/bin/phanspeed-healthcheck"; do \
-	    bin=$${spec%% *}; \
-	    out=$$(timeout 10 python3 $$spec 2>&1); rc=$$?; \
-	    if echo "$$out" | grep -qE 'ModuleNotFoundError|ImportError'; then \
-	        echo "check-sutra FAIL: $$bin can't import sutra run straight from the checkout" \
-	             "(unvendored, no staged prefix) -- the bootstrap preamble's" \
-	             "dirname(dirname(realpath(__file__)))/share/<pill>/lib arithmetic doesn't" \
-	             "resolve to where sutra actually sits; check-sutra's own integrity/freshness" \
-	             "loop above only proves the FILES match their anchors, never that a binary" \
-	             "can actually FIND them from the tree as checked out"; \
-	        echo "$$out" | tail -5; \
-	        fail=1; \
-	    else \
-	        echo "check-sutra: $$bin imports sutra ok when run straight from the checkout" \
-	             "(rc=$$rc, unrelated to import -- no real hardware/systemd/network here)"; \
-	    fi; \
-	done; \
-	exit $$fail
+# check-sutra (integrity+freshness of the vendored .py modules and, via
+# SUTRA_EXT_DIR above, pill.js) and check-vendored-path[-all] (the
+# checkout-run resolution guard -- supersedes phanspeed's own earlier
+# ModuleNotFoundError-grep version: sutra.mk's form loads each binary as a
+# real module and compares the ACTUAL resolved <module>.__file__ against
+# the expected path, not just the absence of an import exception, which
+# also catches a binary that silently imported a DIFFERENT stale sutra.py
+# off sys.path) both now come from sutra.mk, included above.
 
 # The family's structural gate (REPO-STANDARD.md §5), mechanical only: it
 # cannot judge whether a document is any good, only that the shape it's
@@ -126,7 +107,7 @@ check-repo:
 	if [ ! -e src/data/man/man1/phanspeed.1 ] && ! grep -q 'man1/phanspeed.1' docs/ARCHITECTURE.md 2>/dev/null; then \
 	    echo "check-repo FAIL: no src/data/man/man1/phanspeed.1 and no exemption for it"; fail=1; \
 	fi; \
-	rows=$$(git ls-files | cut -d/ -f1 | sort -u | wc -l); \
+	rows=$(SUTRA_ROOT_ROWS); \
 	if [ "$$rows" -gt 12 ]; then \
 	    echo "check-repo FAIL: root has $$rows rows, standard caps it at 12"; fail=1; \
 	else \
@@ -171,12 +152,6 @@ check-py:
 		src/bin/phanspeed-healthcheck src/share/phanspeed/lib/sutra.py src/share/phanspeed/lib/sutra_update.py \
 		src/share/phanspeed/lib/sutra_xen.py tests/diag.py
 
-check-validation:
-	python3 tests/test_validation.py
-
-check-signing:
-	python3 tests/test_signing.py
-
 check-js:
 	node --check $(EXT)/extension.js $(EXT)/pill.js
 
@@ -194,13 +169,28 @@ check-man:
 check-deb: deb
 	dpkg-deb --info dist/phanspeed_"$$(cat packaging/VERSION)"_all.deb >/dev/null
 
-check: check-sutra lint verify-unit check-shell-syntax check-py check-validation check-signing \
+check: check-sutra check-vendored-path-all lint verify-unit check-shell-syntax check-py \
 	check-js check-json check-man
 	@echo "all static checks passed"
 
+# hardware-free daemon/signing tests -- deliberately excluded from `check`
+# above, same as the rest of the family (real daemon init, real sockets,
+# slower than a plain static pass should be). check-validation imports
+# phanspeedd and fuzzes sanitize_config; check-signing exercises the real
+# release-signing trust chain end to end. Canonical family verb order
+# (UNIFY.md row 6): `smoke attack check deb`.
+smoke: check-validation check-signing
+
+check-validation:
+	python3 tests/test_validation.py
+
+check-signing:
+	python3 tests/test_signing.py
+
 # the thorough adversarial pass (full cmd surface + oversized/garbage/nested/
-# stall) — canonical family verb (UNIFY.md row 6: `smoke attack check deb`);
-# `test` stays as a back-compat alias (README/CI history call it that).
+# stall) — needs real Dell hardware (dell-smm-hwmon + platform_profile),
+# run by maintainers on-device, not in CI. `test` stays as a back-compat
+# alias (README/CI history call it that).
 attack:
 	python3 tests/attack_socket.py
 

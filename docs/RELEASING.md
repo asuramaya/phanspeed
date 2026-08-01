@@ -23,9 +23,13 @@ a missing or malformed heading blocks the tag instead of shipping a thin body.
 Run the checks:
 
 ```bash
-make check          # lint, py_compile, node --check, unit + signing tests
-make check-sutra     # the vendored sutra spine matches canonical, integrity + freshness
-make attack          # adversarial fuzz of the control socket (needs real Dell hardware)
+make check   # static: lint, py_compile, node --check, man pages, the vendored
+             # sutra spine matches canonical (integrity + freshness), and each
+             # sutra-importing binary actually resolves it to the real
+             # installed copy, not merely that a file exists at the path the
+             # bootstrap preamble predicts
+make smoke   # hardware-free: config-fuzz + the real release-signing chain
+make attack  # adversarial fuzz of the control socket (needs real Dell hardware)
 ```
 
 `check-sutra` failing on freshness (not lag) means the shared spine drifted or

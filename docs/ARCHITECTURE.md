@@ -156,6 +156,32 @@ The daemon is root with a world-reachable socket, so **every input is hostile**:
   (peer-auth, oversized/garbage input, rate limiting). Needs real Dell hardware;
   run with `make attack` (`make test` still works, as an alias).
 
+phanspeed adopted sutra 0.11.1's recipe layer the same way as the code:
+`src/share/phanspeed/lib/sutra.mk`, included from the root `Makefile`
+(`PILL := phanspeed`), supplies `check-sutra` itself, extended to also cover
+`pill.js` via `SUTRA_EXT_DIR` since phanspeed vendors the extension commons
+too, the canonical tracked-files row count (`check-repo` references
+`SUTRA_ROOT_ROWS` instead of re-deriving it), and `check-vendored-path`. That
+last one loads a binary as a real module and asks Python what it actually
+imported, rather than checking that a file merely exists at the path the
+bootstrap preamble's own arithmetic predicts (or, phanspeed's own earlier
+form, grepping subprocess output for `ModuleNotFoundError`) — both weaker
+checks pass cleanly on the exact regression this one is meant to catch: a
+binary missing the preamble entirely, sitting beside a stale co-located
+`sutra.py`, still imports successfully through Python's own
+script-directory `sys.path` rule and still exits 0. `make
+check-vendored-path-all` is the one genuine pill-side supplement sutra.mk
+doesn't close: its own `check-vendored-path` target validates one binary per
+invocation, and phanspeed carries the bootstrap preamble in three
+(`phanspeedd`, `phanspeed-healthcheck`, `phanspeed-update`), so the
+Makefile's `SUTRA_CHECK_BINS` loops it, checking `phanspeed-update` against
+`sutra_update` specifically since that's the module it actually binds. CI
+mirrors the same two-layer split: a `shared` job (`.github/workflows/ci.yml`)
+calls sutra's own reusable `pill-ci.yml`, pinned to a commit SHA; a
+`phanspeed-specific` sibling job covers `check-vendored-path-all`,
+`verify-unit` (no family-wide systemd-unit check exists yet), and building
+the `.deb`.
+
 ## Adding a config field (checklist)
 
 1. Add it to `DEFAULTS`.
