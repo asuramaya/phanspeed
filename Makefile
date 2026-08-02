@@ -17,7 +17,7 @@ include src/share/phanspeed/lib/sutra.mk
 # integrity+freshness check via sutra.mk's own escape hatch). sutra 0.11.1
 # resolves this Make-level throughout (patsubst, not a shell read of an
 # unexported Make variable) -- the 0.11.0 form needed `export SUTRA_EXT_DIR`
-# as a workaround (Werner's ByeByte fix); that workaround is unnecessary on
+# as a workaround (Werner's byebyte fix); that workaround is unnecessary on
 # 0.11.1, which closes the gap at its source instead.
 SUTRA_EXT_DIR := $(EXT)
 

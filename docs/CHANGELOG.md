@@ -264,7 +264,7 @@ remain UNRUN pending bare-metal access (Osiris thread 9c943e0a).
 ### Changed
 - **Adopted the sutra backbone (behavior-preserving).** Vendored
   `bin/sutra.py` + `bin/sutra.version` (sutra 0.1.0) — phanspeed is the
-  fourth pill onto the shared runtime skeleton (ByeByte piloted it, coldspot
+  fourth pill onto the shared runtime skeleton (byebyte piloted it, coldspot
   followed), so a security fix to the control socket now lands once across
   the family instead of six times. `write_status` → `sutra.write_status`
   (unchanged final permissions/ownership; the tmp file is chmod+chowned
