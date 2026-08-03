@@ -76,7 +76,7 @@ All notable changes to this project are documented here. The format is based on
   `FileNotFoundError`: any install from before this week's install-path
   migration has no anchor at all and was reported as *corrupted* rather than
   *unverifiable*, two different things. Fixed to a real three-state read
-  (matches / does not match / anchor missing, matching Till's RAMstein
+  (matches / does not match / anchor missing, matching Till's ramstein
   reference shape `_installed_sutra_ok`) — only an actual hash mismatch is
   now a failure; a missing anchor logs "can't verify" and is not one.
   Negative-tested all three states directly against fixture install dirs, not
@@ -190,14 +190,14 @@ remain UNRUN pending bare-metal access (Osiris thread 9c943e0a).
   matrix): `packages.txt` (stdlib-only; documents the two hard runtime
   binaries — `systemctl`, `ssh-keygen` — and one optional one —
   `nvidia-smi`), `man/phanspeed.1` + `man/phanspeedd.8` (groff, following
-  RAMstein's template — verbs, full config clamp table, socket protocol,
+  ramstein's template — verbs, full config clamp table, socket protocol,
   security posture), now installed by `packaging/build-deb.sh` into
   `/usr/share/man/man{1,8}`. `make attack` is now the canonical target for
   the adversarial fuzz suite (family grammar, UNIFY.md row 6); `make test`
   stays as a back-compat alias. `systemd/phanspeed.service` gained a
   `Documentation=` line and a parity note against the family's `ramsteind
   (8)` reference unit (UNIFY.md row 12): phanspeed already carries every
-  hardening directive RAMstein's does, plus ~19 more — verdict recorded
+  hardening directive ramstein's does, plus ~19 more — verdict recorded
   inline rather than changing any actual directive.
 
 ### Fixed

@@ -1,7 +1,7 @@
 # Release signing
 
 Repo-specific notes. The canonical, fleet-wide doctrine lives in
-`~/code/REPOS/RELEASE.md` (kast · phanspeed · coldspot · byebyte · RAMstein ·
+`~/code/REPOS/RELEASE.md` (kast · phanspeed · coldspot · byebyte · ramstein ·
 gestalt · sutra) — read that first; this file is phanspeed's application of
 it.
 

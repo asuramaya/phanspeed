@@ -15,7 +15,7 @@ import os
 import subprocess
 import sys
 
-# --- sutra bootstrap (sutra 0.11.1; see docs/BOOTSTRAP.md -- do not hand-edit) ----
+# --- sutra bootstrap (sutra 0.12.9; see docs/BOOTSTRAP.md -- do not hand-edit) ----
 import os as _os
 import sys as _sys
 _PILL = "phanspeed"
@@ -46,7 +46,7 @@ def _module_sutra_ok(mod):
     """None when the anchor is missing (older install, predates the
     install-path bootstrap, can't verify); otherwise True/False for
     whether the installed <mod>.py's own sha256 still matches the
-    .version anchor installed beside it. Till's RAMstein form
+    .version anchor installed beside it. Till's ramstein form
     (_installed_sutra_ok) is the reference shape."""
     py = os.path.join(LIBDIR, f"{mod}.py")
     vf = os.path.join(LIBDIR, f"{mod}.version")

@@ -30,7 +30,7 @@ jobs:
       # run-check-version / run-signing-verify stay false: phanspeed has no
       # check-version target (packaging/VERSION is the one constant,
       # check-repo's own rule enforces exactly that, same convention as
-      # RAMstein/byebyte); signing verification already runs inside
+      # ramstein/byebyte); signing verification already runs inside
       # `make smoke` -- run-signing-verify would run it a second time.
 
   # Genuinely phanspeed-specific, per pill-ci.yml's own header ("stays as a

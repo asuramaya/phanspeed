@@ -157,7 +157,7 @@ check-py:
 # `import Foo from "bar";` followed by an unambiguous syntax error (an
 # unclosed brace) still exits 0. Every extension.js/pill.js in the family is
 # an ES module, always, by construction, so the bare form has been passing
-# malformed GJS since this line was written (Till/RAMstein 18d7d15, the
+# malformed GJS since this line was written (Till/ramstein 18d7d15, the
 # negative control that caught it). `--input-type=module` over stdin parses
 # for real -- verified against the same known-bad file: catches it, exit 1.
 check-js:
