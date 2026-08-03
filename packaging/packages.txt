@@ -19,6 +19,9 @@ openssh-client    # `ssh-keygen -Y verify`: phanspeed-update's release-signature
 # Suggests, not Recommends: apt installs Recommends BY DEFAULT, so a headless
 # `apt install phanspeed` would otherwise pull all of GNOME Shell. Operator
 # ruling 2cd900ce, family-wide.
+gnome-shell     # the Quick Settings pill (extension/phanspeed@asuramaya).
+                # Absent: phanspeedd and the `phanspeed` CLI work exactly the
+                # same headless; only the GNOME UI is unavailable.
 nvidia-smi      # NVIDIA proprietary driver's CLI. Backs GPU power-limit
                 # control, persistence mode, and Endure's dGPU-sleep/wake
                 # status reporting (bin/phanspeedd's _find_nvidia_smi()).
@@ -31,6 +34,3 @@ nvidia-smi      # NVIDIA proprietary driver's CLI. Backs GPU power-limit
                 # machine" when there's no PCI device at all — telling a
                 # laptop with no dGPU to install a driver it can't use would
                 # be worse than saying nothing.
-gnome-shell     # the Quick Settings pill (extension/phanspeed@asuramaya).
-                # Absent: phanspeedd and the `phanspeed` CLI work exactly the
-                # same headless; only the GNOME UI is unavailable.
