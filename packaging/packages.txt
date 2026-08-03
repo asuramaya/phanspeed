@@ -6,21 +6,31 @@
 # automatically) vs optional (feature degrades gracefully if absent).
 
 # --- hard (packaging/debian/control Depends) ------------------------------
-python3         # the interpreter itself
-systemd         # phanspeedd.service, the update timer, `systemctl` calls
-                # (endure_pause_units' unit pause/resume, healthcheck restart)
-openssh-client  # `ssh-keygen -Y verify`: phanspeed-update's release-signature
-                # check against release-signing/allowed_signers, and
-                # install.sh's own bootstrap verify. Absent: verify_signature()
-                # fails closed (refuses to install) rather than crashing —
-                # see bin/phanspeed-update.
+python3 (>= 3.8)  # the interpreter itself
+systemd           # phanspeedd.service, the update timer, `systemctl` calls
+                  # (endure_pause_units' unit pause/resume, healthcheck restart)
+openssh-client    # `ssh-keygen -Y verify`: phanspeed-update's release-signature
+                  # check against release-signing/allowed_signers, and
+                  # install.sh's own bootstrap verify. Absent: verify_signature()
+                  # fails closed (refuses to install) rather than crashing —
+                  # see bin/phanspeed-update.
 
-# --- optional (packaging/debian/control Recommends) -----------------------
+# --- optional (packaging/debian/control Suggests) --------------------------
+# Suggests, not Recommends: apt installs Recommends BY DEFAULT, so a headless
+# `apt install phanspeed` would otherwise pull all of GNOME Shell. Operator
+# ruling 2cd900ce, family-wide.
 nvidia-smi      # NVIDIA proprietary driver's CLI. Backs GPU power-limit
                 # control, persistence mode, and Endure's dGPU-sleep/wake
                 # status reporting (bin/phanspeedd's _find_nvidia_smi()).
                 # Absent, or no NVIDIA dGPU present: those fields just report
-                # unavailable — never an error.
+                # unavailable — never an error. The one opt-in verb that does
+                # need it, gpu_persistence, refuses at daemon startup naming
+                # the actual cause: "nvidia-smi was not found (install the
+                # NVIDIA proprietary driver)" when a dGPU is PCI-detected but
+                # the tool is missing, vs "no NVIDIA dGPU is present on this
+                # machine" when there's no PCI device at all — telling a
+                # laptop with no dGPU to install a driver it can't use would
+                # be worse than saying nothing.
 gnome-shell     # the Quick Settings pill (extension/phanspeed@asuramaya).
                 # Absent: phanspeedd and the `phanspeed` CLI work exactly the
                 # same headless; only the GNOME UI is unavailable.

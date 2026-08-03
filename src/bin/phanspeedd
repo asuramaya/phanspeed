@@ -920,6 +920,12 @@ class Gpu:
         burns several watts at 0% util). Note: nvidia-persistenced, if running,
         pins the GPU on and defeats this — Endure still sets control=auto."""
         self.pci_control = []        # writable .../power/control paths
+        self.pci_present = False     # an NVIDIA display function exists at all,
+                                      # regardless of write access -- pci_control
+                                      # is gated on os.access(W_OK) below, so it
+                                      # under-reports "no dGPU" when unprivileged
+                                      # or when a write is denied for some other
+                                      # reason; this is the one signal that isn't.
         self._pci_saved = {}         # original control values, for restore
         try:
             devs = sorted(glob.glob(os.path.join(PCI_DEVICES, "*")))
@@ -931,6 +937,7 @@ class Gpu:
             cls = _read(os.path.join(d, "class")) or ""
             if not cls.startswith("0x03"):     # display controller only
                 continue
+            self.pci_present = True
             ctl = os.path.join(d, "power", "control")
             if os.access(ctl, os.W_OK):
                 self.pci_control.append(ctl)
@@ -1126,6 +1133,19 @@ class Daemon:
         log(f"level map: {self.hw.level_profile}")
         log(f"fans: {[(i, f['label']) for i, f in self.hw.fans.items()]}")
         log(f"watchdog sensors: {self.hw.crit_sensor_ids}")
+        if self.config.get("gpu_persistence") and not self.hw.gpu.available:
+            # nvidia-smi absence has two different causes that want different
+            # messages: a dGPU physically present (PCI-detected via
+            # pci_present, independent of write access or nvidia-smi) means
+            # the driver needs installing; no PCI device at all means the
+            # machine simply has no NVIDIA dGPU, and naming a driver to
+            # install would be actively wrong advice.
+            if self.hw.gpu.pci_present and not NVIDIA_SMI:
+                log("gpu_persistence is configured but nvidia-smi was not "
+                    "found (install the NVIDIA proprietary driver)")
+            elif not self.hw.gpu.pci_present:
+                log("gpu_persistence is configured but no NVIDIA dGPU is "
+                    "present on this machine")
 
     # ---- config ---- #
     def load_config(self):
