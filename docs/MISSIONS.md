@@ -1,6 +1,6 @@
 # Missions — the gestalt
 
-PhanSpeed grew out of three crises on one laptop, and each taught it a mission.
+phanspeed grew out of three crises on one laptop, and each taught it a mission.
 What looked like a pile of levers (profiles, RAPL caps, EPP, turbo, GPU power,
 auto-tuner) is really **one governor that fights the three things that cripple a
 laptop** — and you pick which fight it's in.

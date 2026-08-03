@@ -1,4 +1,4 @@
-# Releasing PhanSpeed
+# Releasing phanspeed
 
 How a version becomes a signed release. The trust chain itself is described in
 [RELEASE-SIGNING.md](RELEASE-SIGNING.md); this is the running order.
@@ -47,7 +47,7 @@ unsigned. It signs nothing, and that's deliberate: if CI could sign, then
 anyone who compromised the workflow or the account could sign whatever they
 pushed, and the anchor would be protecting nothing.
 
-PhanSpeed has been armed since v0.30.1, so **every release from here on must
+phanspeed has been armed since v0.30.1, so **every release from here on must
 be sealed before anyone relies on it**. An armed client refuses an unsigned
 release outright, and it's right to. Don't tag unless the operator is
 available to sign shortly after.

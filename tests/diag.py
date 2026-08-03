@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 """One-shot diagnostic: what fan/thermal control does this Dell actually allow?
 
 Run: sudo python3 diag.py   (safe — restores original state, monitors temp)

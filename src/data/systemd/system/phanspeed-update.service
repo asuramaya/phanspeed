@@ -1,12 +1,12 @@
 [Unit]
-Description=PhanSpeed auto-update (check GitHub releases, install newer .deb)
+Description=phanspeed auto-update (check GitHub releases, install newer .deb)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 # Runs as root and installs a system package, so it can't be sandboxed like the
-# daemon. It's a short-lived oneshot and the only PhanSpeed component with
+# daemon. It's a short-lived oneshot and the only phanspeed component with
 # network access — the privileged control loop (phanspeedd) stays networkless.
 # --check makes the daily timer notify-only: it CHECKS and logs but never
 # installs unattended. Actual installs happen interactively via the pill's

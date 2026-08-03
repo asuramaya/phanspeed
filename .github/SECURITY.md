@@ -1,6 +1,6 @@
 # Security Policy
 
-PhanSpeed runs a **root daemon** that accepts commands over a local Unix socket,
+phanspeed runs a **root daemon** that accepts commands over a local Unix socket,
 so security is taken seriously.
 
 ## Reporting a vulnerability

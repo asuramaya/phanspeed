@@ -1,6 +1,6 @@
 ---
 name: Hardware compatibility report
-about: Report whether PhanSpeed works on your Dell model
+about: Report whether phanspeed works on your Dell model
 labels: hardware
 ---
 

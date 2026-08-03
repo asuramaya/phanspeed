@@ -1,12 +1,12 @@
-# Using PhanSpeed
+# Using phanspeed
 
-How to drive PhanSpeed day to day: the pill, the CLI, tuning, and troubleshooting.
-What PhanSpeed is and why to install it lives in the [README](../README.md); how
+How to drive phanspeed day to day: the pill, the CLI, tuning, and troubleshooting.
+What phanspeed is and why to install it lives in the [README](../README.md); how
 it's built lives in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## The pill
 
-Open Quick Settings and PhanSpeed sits next to Wi-Fi and Bluetooth: a **mission
+Open Quick Settings and phanspeed sits next to Wi-Fi and Bluetooth: a **mission
 chip row** (🔥 Perf · 🔋 Endure) and an **intensity dial**. The headline re-skins
 to each mission's own metric, clock and watts for Perf, break-even balance for
 Endure, and the icon changes with the active mission.
@@ -128,7 +128,7 @@ base TDP automatically.
 
 **The pill doesn't do anything, or profile writes fail.** Direct fan RPM/PWM
 control is impossible on locked-down Dell firmware, that's expected;
-`platform_profile` is the lever PhanSpeed uses instead. Run `sudo python3
+`platform_profile` is the lever phanspeed uses instead. Run `sudo python3
 tests/diag.py` from a clone to see exactly what your machine allows: it's a
 one-shot, safe probe that restores original state and never leaves anything
 changed.

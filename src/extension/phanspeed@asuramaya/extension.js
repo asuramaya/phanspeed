@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 asuramaya and PhanSpeed contributors
+// Copyright (C) 2026 asuramaya and phanspeed contributors
 //
-// PhanSpeed — Dell thermal/fan control as a GNOME Quick Settings pill.
+// phanspeed — Dell thermal/fan control as a GNOME Quick Settings pill.
 // Reads the daemon's status snapshot for display and sends control commands to
 // the daemon's Unix socket on user action.
 
@@ -104,8 +104,8 @@ function readStatus() {
 const PhanToggle = GObject.registerClass(
 class PhanToggle extends QuickMenuToggle {
     _init(cancellable) {
-        super._init({title: 'PhanSpeed', iconName: DEFAULT_ICON, toggleMode: true});
-        this.menu.setHeader(DEFAULT_ICON, 'PhanSpeed', 'Thermal control');
+        super._init({title: 'phanspeed', iconName: DEFAULT_ICON, toggleMode: true});
+        this.menu.setHeader(DEFAULT_ICON, 'phanspeed', 'Thermal control');
         this._cancellable = cancellable;
 
         // ---- the face: mission chips + intensity + one hero readout ---- //
@@ -225,7 +225,7 @@ class PhanToggle extends QuickMenuToggle {
     }
 
     _send(obj) {
-        Pill.sendCmd(SOCK_PATH, obj, this._cancellable, 'PhanSpeed');
+        Pill.sendCmd(SOCK_PATH, obj, this._cancellable, 'phanspeed');
     }
 
     checkForUpdate() {
@@ -628,14 +628,14 @@ class PhanToggle extends QuickMenuToggle {
                 `<span foreground="${DIM}">${pParts.join('  ·  ')}</span>`);
         this._powerReadoutItem.visible = pParts.length > 0;
 
-        this.menu.setHeader(this.iconName, 'PhanSpeed', sub);
+        this.menu.setHeader(this.iconName, 'phanspeed', sub);
 
         // version footer + update notice — the update spine's face
         this._updateSurface.setVersion(typeof st.version === 'string' ? st.version : null);
     }
 });
 
-export default class PhanSpeedExtension extends Extension {
+export default class phanspeedExtension extends Extension {
     enable() {
         this._cancellable = new Gio.Cancellable();
         this._toggle = new PhanToggle(this._cancellable);

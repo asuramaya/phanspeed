@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 """phanspeed — one human entrypoint for the daemon (mirrors `kast <verb>`).
 
 Wraps the control socket and delegates to the helper binaries, so everything is

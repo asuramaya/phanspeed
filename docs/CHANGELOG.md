@@ -881,9 +881,9 @@ least-privilege defaults. This release closes those.
 ## [0.15.0] — 2026-06-24
 
 ### Added
-- **The third mission — Endure.** PhanSpeed's two earlier crises taught it to
+- **The third mission — Endure.** phanspeed's two earlier crises taught it to
   *survive heat* and *unleash performance*; the third is **surviving power**.
-  PhanSpeed is now a single governor with three stances, each redefining the
+  phanspeed is now a single governor with three stances, each redefining the
   control objective and re-skinning the pill's hero readout:
   - 🧊 **Cool** — cap watts at the source (temperature is the metric).
   - 🔥 **Perf** — full power + boost where allowed (clock/watts is the metric).

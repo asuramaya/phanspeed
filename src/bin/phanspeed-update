@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
-"""phanspeed-update — pull newer PhanSpeed releases from GitHub and install them.
+# Copyright (C) 2026 asuramaya and phanspeed contributors
+"""phanspeed-update — pull newer phanspeed releases from GitHub and install them.
 
 Thin wrapper over the vendored sutra_update.py (UNIFY.md Wave A #1, the
 family's shared update spine): one grammar, one trust chain, one
@@ -82,7 +82,7 @@ def installed_version():
 if __name__ == "__main__":
     cur = installed_version()
     if cur is None:
-        print("PhanSpeed not detected; nothing to update.")
+        print("phanspeed not detected; nothing to update.")
         sys.exit(0)
     sys.exit(sutra_update.main(
         pill=PILL, slug=REPO_SLUG, installed_version=cur,

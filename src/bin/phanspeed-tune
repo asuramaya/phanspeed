@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 """phanspeed-tune — closed-loop RAPL power auto-tuner (Tier 1, safe).
 
 Sweeps the CPU package power cap (RAPL PL1/PL2) under a controlled all-core load,
@@ -221,7 +221,7 @@ def pick(rows, ceiling):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="PhanSpeed RAPL power auto-tuner")
+    ap = argparse.ArgumentParser(description="phanspeed RAPL power auto-tuner")
     ap.add_argument("--target", choices=["ac", "battery", "both"], default="both")
     ap.add_argument("--ceiling", type=int, default=85, help="thermal ceiling °C")
     ap.add_argument("--lo", type=int, default=25, help="lowest cap to try (W)")

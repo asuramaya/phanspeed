@@ -1,5 +1,5 @@
 [Unit]
-Description=PhanSpeed — Dell thermal/fan control daemon
+Description=phanspeed — Dell thermal/fan control daemon
 Documentation=https://github.com/asuramaya/phanspeed
 After=multi-user.target
 

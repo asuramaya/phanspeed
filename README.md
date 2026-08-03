@@ -1,4 +1,4 @@
-# PhanSpeed
+# phanspeed
 
 [![CI](https://github.com/asuramaya/phanspeed/actions/workflows/ci.yml/badge.svg)](https://github.com/asuramaya/phanspeed/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/asuramaya/phanspeed?sort=semver)](https://github.com/asuramaya/phanspeed/releases/latest)
@@ -15,7 +15,7 @@ Settings pill** next to Wi-Fi and Bluetooth. Built and tested on a **Precision
 > [thermal failsafe](#security-model) and the no-warranty terms in the license.
 
 <p align="center">
-  <img src="docs/pill-preview.svg" alt="PhanSpeed Quick Settings pill" width="380">
+  <img src="docs/pill-preview.svg" alt="phanspeed Quick Settings pill" width="380">
 </p>
 
 <sub>Mockup of the expanded pill. To capture a real recording on Wayland:
@@ -29,13 +29,13 @@ Direct fan/RPM control is **firmware-locked** on modern Dells, verified on this
 machine: `pwm_enable` accepts only `1` (BIOS-auto), and `pwm` writes are ignored
 (`EINVAL`). No Linux tool can set fan RPM here. The one lever the firmware honors
 is the ACPI **platform_profile**: `cool · quiet · balanced · performance`.
-`cool` makes the EC ramp fans early and hard; `quiet` keeps them calm. PhanSpeed
+`cool` makes the EC ramp fans early and hard; `quiet` keeps them calm. phanspeed
 drives that, with a temperature auto-policy on top (the closest thing to a fan
 curve the hardware allows).
 
 ## Two missions (+ one that still works, just not on the pill)
 
-PhanSpeed is one governor fighting the things that cripple a laptop. You pick
+phanspeed is one governor fighting the things that cripple a laptop. You pick
 which fight it's in, and the pill re-skins to that mission's metric:
 
 - 🔥 **Perf** · *unleash*: take everything the chassis allows, including the

@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# PhanSpeed auto-tuner — design
+# phanspeed auto-tuner — design
 
 A closed-loop calibrator that drives a lever, stress-tests each setting, measures
 the result, and converges on the best **stable** operating point — so the machine

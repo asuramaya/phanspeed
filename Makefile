@@ -1,4 +1,4 @@
-# PhanSpeed — common tasks. Run `make help` for the list.
+# phanspeed — common tasks. Run `make help` for the list.
 EXT := src/extension/phanspeed@asuramaya
 
 # The family's shared recipe layer (sutra.mk, vendored like code under its
@@ -45,7 +45,7 @@ SUTRA_CHECK_BINS := src/bin/phanspeedd src/bin/phanspeed-healthcheck src/bin/pha
 	check-json check-shell-syntax check-man smoke clean
 
 help:
-	@echo "PhanSpeed targets:"
+	@echo "phanspeed targets:"
 	@echo "  make install     install daemon + extension (sudo)"
 	@echo "  make uninstall   remove everything (sudo)"
 	@echo "  make check       run all static checks (CI-equivalent)"

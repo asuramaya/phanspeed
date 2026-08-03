@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the PhanSpeed healthcheck periodically
+Description=Run the phanspeed healthcheck periodically
 
 [Timer]
 OnBootSec=2min

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 """phanspeed-healthcheck — restart phanspeedd if it's inactive or wedged
 (status stale, or the control socket stopped answering). Run periodically
 by phanspeed-healthcheck.timer.

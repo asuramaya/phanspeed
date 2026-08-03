@@ -1,6 +1,6 @@
-# Contributing to PhanSpeed
+# Contributing to phanspeed
 
-Thanks for your interest! PhanSpeed is small and dependency-free on purpose —
+Thanks for your interest! phanspeed is small and dependency-free on purpose —
 keep changes simple and self-contained. For how the pieces fit together and
 where each file lives, see [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) —
 the one repo map, kept in one place so it can't drift out of sync with this file.
@@ -35,7 +35,7 @@ journalctl -f -o cat /usr/bin/gnome-shell             # extension logs
 
 ## Hardware support
 
-PhanSpeed was built on a Dell Precision 5770 but should work on any Dell exposing
+phanspeed was built on a Dell Precision 5770 but should work on any Dell exposing
 `platform_profile` via `dell-smm-hwmon`. If you test it on another model, please
 open an issue/PR noting the model, kernel, and `tests/diag.py` output so we can
 grow a compatibility list.

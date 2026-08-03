@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 set -euo pipefail
 REAL_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
@@ -9,7 +9,7 @@ EXT_UUID="phanspeed@asuramaya"
 PREFIX="${PREFIX:-/usr/local}"
 if [[ $EUID -ne 0 ]]; then exec sudo -E bash "$0" "$@"; fi
 
-echo "== uninstalling PhanSpeed =="
+echo "== uninstalling phanspeed =="
 systemctl disable --now phanspeed-update.timer 2>/dev/null || true
 systemctl disable --now phanspeed-healthcheck.timer 2>/dev/null || true
 systemctl disable --now phanspeed.service 2>/dev/null || true

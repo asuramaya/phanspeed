@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
+# Copyright (C) 2026 asuramaya and phanspeed contributors
 """
 phanspeedd — Dell thermal-profile control daemon (Precision / XPS).
 
@@ -112,7 +112,7 @@ LEVEL_NAMES = {
 }
 RESTORE_NAMES = ["balanced", "balanced-performance", "quiet"]
 
-# Missions — the three stances PhanSpeed takes against the three things that
+# Missions — the three stances phanspeed takes against the three things that
 # cripple a laptop. Each redefines the control objective:
 #   cool    — survive heat: cap watts at the source, quiet/cool fans.
 #   perf    — unleash: full power, performance EPP, turbo where allowed.

@@ -1,6 +1,6 @@
 # Architecture
 
-A contributor-facing map of how PhanSpeed fits together. User-facing docs are in
+A contributor-facing map of how phanspeed fits together. User-facing docs are in
 the [README](../README.md) and [USAGE.md](USAGE.md); the release ceremony is in
 [RELEASING.md](RELEASING.md).
 
@@ -9,7 +9,7 @@ the [README](../README.md) and [USAGE.md](USAGE.md); the release ceremony is in
 On modern Dells (verified on a Precision 5770 / i9-12900H), **direct fan RPM/PWM
 control is firmware-locked** — `dell_smm_hwmon`'s `pwm*_enable` only accepts `1`
 (BIOS-auto); `0`/`2`/`3` return `EINVAL` and `pwm` writes are ignored. So
-PhanSpeed never tries to set fan speed. The levers that *do* work:
+phanspeed never tries to set fan speed. The levers that *do* work:
 
 | Lever | Interface | Effect |
 |-------|-----------|--------|

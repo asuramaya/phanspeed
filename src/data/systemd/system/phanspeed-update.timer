@@ -1,5 +1,5 @@
 [Unit]
-Description=PhanSpeed daily auto-update check
+Description=phanspeed daily auto-update check
 
 [Timer]
 OnBootSec=10min

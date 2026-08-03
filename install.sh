@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 asuramaya and PhanSpeed contributors
-# PhanSpeed installer — Dell thermal/fan control daemon + Quick Settings pill.
+# Copyright (C) 2026 asuramaya and phanspeed contributors
+# phanspeed installer — Dell thermal/fan control daemon + Quick Settings pill.
 set -euo pipefail
 
 REPO="asuramaya/phanspeed"
@@ -42,7 +42,7 @@ phanspeed namespaces="phanspeed-release,pills-tag" sk-ssh-ed25519@openssh.com AA
 # wanting a source install instead should clone the repo and run this script
 # from within it — untouched, and skips this block entirely.
 if [[ ! -f "$SRC/src/bin/phanspeedd" ]]; then
-  echo "== fetching latest PhanSpeed release =="
+  echo "== fetching latest phanspeed release =="
   command -v dpkg >/dev/null || {
     echo "dpkg not found — this quick-install path needs a Debian/Ubuntu"
     echo "system. Clone the repo and run install.sh from a full checkout"
@@ -97,7 +97,7 @@ if [[ ! -f "$SRC/src/bin/phanspeedd" ]]; then
     || echo "(enable it after your next login: gnome-extensions enable $EXT_UUID)"
   echo
   echo ">>> LOG OUT and back in once <<<  (Wayland must restart the shell to load a"
-  echo "    new extension). After that the PhanSpeed pill appears in Quick Settings"
+  echo "    new extension). After that the phanspeed pill appears in Quick Settings"
   echo "    next to Wi-Fi/Bluetooth — no further logouts ever needed."
   exit 0
 fi
@@ -109,7 +109,7 @@ fi
 
 umask 077   # anything we create is private by default; loosen explicitly below
 
-echo "== PhanSpeed installer =="
+echo "== phanspeed installer =="
 
 # 0. migrate off the old prototype, if present
 if systemctl list-unit-files dellfand.service &>/dev/null; then
@@ -251,5 +251,5 @@ echo "== done =="
 systemctl --no-pager --full status phanspeed.service | head -n 5 || true
 echo
 echo ">>> LOG OUT and back in once <<<  (Wayland must restart the shell to load a"
-echo "    new extension). After that the PhanSpeed pill appears in Quick Settings"
+echo "    new extension). After that the phanspeed pill appears in Quick Settings"
 echo "    next to Wi-Fi/Bluetooth — no further logouts ever needed."

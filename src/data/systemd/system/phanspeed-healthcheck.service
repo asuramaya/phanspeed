@@ -1,5 +1,5 @@
 [Unit]
-Description=PhanSpeed healthcheck (restart the daemon if it wedged)
+Description=phanspeed healthcheck (restart the daemon if it wedged)
 After=phanspeed.service
 
 [Service]
