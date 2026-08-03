@@ -152,8 +152,18 @@ check-py:
 		src/bin/phanspeed-healthcheck src/share/phanspeed/lib/sutra.py src/share/phanspeed/lib/sutra_update.py \
 		src/share/phanspeed/lib/sutra_xen.py tests/diag.py
 
+# `node --check <path>` on a file with a top-level import/export silently
+# skips real syntax validation -- confirmed directly: a file starting with
+# `import Foo from "bar";` followed by an unambiguous syntax error (an
+# unclosed brace) still exits 0. Every extension.js/pill.js in the family is
+# an ES module, always, by construction, so the bare form has been passing
+# malformed GJS since this line was written (Till/RAMstein 18d7d15, the
+# negative control that caught it). `--input-type=module` over stdin parses
+# for real -- verified against the same known-bad file: catches it, exit 1.
 check-js:
-	node --check $(EXT)/extension.js $(EXT)/pill.js
+	@for f in "$(EXT)/extension.js" "$(EXT)/pill.js"; do \
+	  node --input-type=module --check < "$$f" || exit 1; \
+	done
 
 check-json:
 	python3 -c "import json; json.load(open('$(EXT)/metadata.json'))"
